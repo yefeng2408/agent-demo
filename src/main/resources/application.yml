@@ -1,0 +1,45 @@
+spring:
+  application:
+    name: agent
+
+  datasource:
+    url: jdbc:mysql://localhost:3306/act5?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+    username: root
+    password: yefeng
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  ai:
+    # 关键：指定哪个 provider 负责 chat / embedding
+    model:
+      chat: openai
+      embedding: ollama
+
+    # Chat -> DeepSeek（OpenAI 兼容）
+    openai:
+      api-key: sk-8d83d0abdb6b42ae893aa5950b59fadd   # 强烈建议用环境变量
+      base-url: https://api.deepseek.com
+      chat:
+        options:
+          model: deepseek-chat
+          temperature: 0.2
+
+    # Embedding -> Ollama（本地）
+    ollama:
+      base-url: http://localhost:11434
+      embedding:
+        options:
+          model: nomic-embed-text
+
+    # Milvus VectorStore
+    vectorstore:
+      milvus:
+        uri: localhost:19530
+        collection-name: user_long_term_memory_768   # 下面会解释为什么改名
+        database-name: default
+        embedding-field-name: vector
+        token: ""
+
+logging:
+  level:
+    org.springframework.ai: DEBUG
+    org.springframework.web.client.RestClient: DEBUG
