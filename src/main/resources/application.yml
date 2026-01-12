@@ -16,7 +16,7 @@ spring:
 
     # Chat -> DeepSeek（OpenAI 兼容）
     openai:
-      api-key: sk-8d83d0abdb6b42ae893aa5950b59fadd   # 强烈建议用环境变量
+      api-key: sk-f6801c46876a4d3081a0a4a20aa96e52
       base-url: https://api.deepseek.com
       chat:
         options:
@@ -34,10 +34,12 @@ spring:
     vectorstore:
       milvus:
         uri: localhost:19530
-        collection-name: user_long_term_memory_768   # 下面会解释为什么改名
+        #collection-name: user_long_term_memory_768   # 下面会解释为什么改名
+        collection-name: vector_store
         database-name: default
         embedding-field-name: vector
         token: ""
+
 
 logging:
   level:

@@ -34,6 +34,7 @@
     <repositories>
         <repository>
             <id>spring-milestones</id>
+            <name>Spring Milestones</name>
             <url>https://repo.spring.io/milestone</url>
         </repository>
     </repositories>
@@ -51,6 +52,18 @@
     </dependencyManagement>
 
     <dependencies>
+        <dependency>
+            <groupId>io.milvus</groupId>
+            <artifactId>milvus-sdk-java</artifactId>
+            <version>2.3.5</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.slf4j</groupId>
+                    <artifactId>slf4j-reload4j</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
         <!-- web -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -84,6 +97,12 @@
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-milvus-store-spring-boot-starter</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.slf4j</groupId>
+                    <artifactId>slf4j-reload4j</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <dependency>
@@ -97,11 +116,7 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
-        <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-api</artifactId>
-            <version>2.0.16</version>
-        </dependency>
+
     </dependencies>
 
 
