@@ -34,20 +34,16 @@ public class ChatController {
             @RequestParam String msg,
             @RequestParam(defaultValue = "debug-user") String userId) {
         Map<String, Object> metadata = new HashMap<>();
-
         // 1. 请求前处理
         personaMemoryAdvisor.onRequest(msg, metadata);
-
         // 2. 获取用户记忆
         List<String> memories = userPersonaAdvisor.getUserMemories(userId);
-
         String systemPrompt = """
                                 你是一个有长期记忆的 AI 助手。
                                 以下是你已知的关于用户的信息：
                                 %s
                                 """
                 .formatted(String.join("\n", memories));
-
         // 3. 调用 LLM
         String answer = personalChatClient
                 .prompt()
@@ -58,7 +54,6 @@ public class ChatController {
 
         // 4. 响应后处理：记录记忆
         personaMemoryAdvisor.onResponse(userId, msg, answer);
-
         return answer;
     }
 }

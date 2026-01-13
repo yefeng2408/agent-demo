@@ -3,6 +3,8 @@ package com.yef.agent.memory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
+
 import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.time.LocalDateTime;
@@ -108,4 +110,58 @@ public class BeliefStore {
     private static BigDecimal bd(double v) {
         return BigDecimal.valueOf(v).setScale(3, java.math.RoundingMode.HALF_UP);
     }
+
+    /**
+     * 提升置信度
+     * @param userId
+     * @param proposition
+     * @param delta
+     * @param targetStatus
+     */
+    public void bumpConfidence(String userId, String proposition, double delta, EpistemicStatus targetStatus) {
+        Optional<BeliefRow> opt = findByUserAndProposition(userId, proposition);
+        if (opt.isEmpty()) return;
+
+        BeliefRow row = opt.get();
+        double newConf = Math.min(row.confidence() + delta, 0.95);
+        upsertBelief(
+                userId,
+                proposition,
+                row.surface(),
+                targetStatus.name(),
+                newConf
+        );
+    }
+    /**
+     * 压低置信度
+     * @param userId
+     * @param predicateName
+     * @param floor
+     */
+    public void downscaleAllSpecifics(String userId, String predicateName, double floor) {
+        String sql = """
+                    SELECT id,user_id, proposition, surface, epistemic_status, confidence,updated_at,created_at
+                    FROM belief_state
+                    WHERE user_id = ?
+                      AND proposition LIKE ?
+                      AND proposition NOT LIKE '%(any)'
+                """;
+        List<BeliefRow> rows = jdbc.query(
+                sql,
+                beliefRowMapper,
+                userId,
+                predicateName + "(%"
+        );
+        for (BeliefRow row : rows) {
+            double newConfidence = Math.max(row.confidence() * 0.5, floor);
+            upsertBelief(
+                    userId,
+                    row.proposition(),
+                    row.surface(),
+                    row.status(),
+                    newConfidence
+            );
+        }
+    }
+
 }

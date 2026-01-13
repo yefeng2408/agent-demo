@@ -49,4 +49,6 @@ public class ClaimExtractor {
                 .call()
                 .entity(ClaimExtractionResult.class);
     }
+
+
 }

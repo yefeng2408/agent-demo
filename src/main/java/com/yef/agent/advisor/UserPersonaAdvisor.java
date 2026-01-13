@@ -13,6 +13,9 @@ import org.springframework.stereotype.Component;
 
 import java.util.*;
 
+import static com.yef.agent.memory.EpistemicStatus.CONFIRMED;
+import static com.yef.agent.memory.EpistemicStatus.DENIED;
+
 @Slf4j
 @Component
 public class UserPersonaAdvisor {
@@ -22,7 +25,7 @@ public class UserPersonaAdvisor {
     private final BeliefStore beliefStore;
     private final EpistemicStateMachine stateMachine;
     private final ConfidenceUpdater confidenceUpdater;
-    private final VectorStore milvusVectorStore;
+    //private final VectorStore milvusVectorStore;
     private final MilvusServiceClient  milvusServiceClient;
     private final JdbcTemplate jdbcTemplate;
     public UserPersonaAdvisor(
@@ -40,22 +43,22 @@ public class UserPersonaAdvisor {
         this.beliefStore = beliefStore;
         this.stateMachine = stateMachine;
         this.confidenceUpdater = confidenceUpdater;
-        this.milvusVectorStore = vectorStore;
+        //this.milvusVectorStore = vectorStore;
         this.milvusServiceClient = milvusServiceClient;
         this.jdbcTemplate = jdbcTemplate;
     }
 
     /** 对外入口：在你原来 Advisor 的 afterResponse / advise 里调用 */
     public void onTurn(String userId, String userText, String aiText) {
-        log.info("[Persona] onTurn userId={}, userText={}, aiText={}",
-                userId, userText, aiText);
+        log.info("[Persona] onTurn userId={}, userText={}, aiText={}", userId, userText, aiText);
         // 1) LLM 抽取 “认知主张（belief claim）”
         ClaimExtractionResult extracted = claimExtractor.extract(userText, aiText);
         if (extracted == null || !extracted.hasClaims() || extracted.claims() == null) return;
 
-        // 2) 逐条处理（这一步就是你要的“认知管理完整些”）
+        // 2) 逐条处理（这一步就是我要的“认知管理完整些”）
         for (ClaimExtractionResult.Claim claim : extracted.claims()) {
             handleSingleClaim(userId, claim, userText);
+            propagateConsistency(userId, claim);
         }
 
 
@@ -65,28 +68,20 @@ public class UserPersonaAdvisor {
                                    ClaimExtractionResult.Claim claim,
                                    String userText) {
 
-        // --- 基础校验 ---
+        // 0️⃣ 基础校验
         if (claim.proposition() == null || claim.proposition().isBlank()) return;
         if (claim.status() == null || claim.status() == EpistemicStatus.UNKNOWN) return;
 
-        // 3) 查旧认知（belief）
+        // 1️⃣ 查旧 belief（只会有 0 或 1 条）
         Optional<BeliefStore.BeliefRow> existingOpt =
                 beliefStore.findByUserAndProposition(userId, claim.proposition());
 
-        EpistemicStatus fromStatus = existingOpt
-                .map(row -> {
-                    try {
-                        return EpistemicStatus.valueOf(row.status());
-                    } catch (Exception e) {
-                        return EpistemicStatus.UNKNOWN;
-                    }
-                })
+        EpistemicStatus fromStatus = existingOpt.map(r -> EpistemicStatus.valueOf(r.status()))
                 .orElse(EpistemicStatus.UNKNOWN);
-        double currentConfidence = existingOpt
-                .map(BeliefStore.BeliefRow::confidence)
-                .orElse(0.5);
 
-        // 4) 构造状态迁移上下文（你之后可以把 recentEvidenceCount 从 DB 算出来）
+        double currentConfidence = existingOpt.map(BeliefStore.BeliefRow::confidence).orElse(0.5);
+
+        // 2️⃣ 构造状态迁移上下文
         StatusTransitionContext ctx = new StatusTransitionContext(
                 claim.proposition(),
                 fromStatus,
@@ -95,21 +90,10 @@ public class UserPersonaAdvisor {
                 1
         );
 
-        // 5) 是否允许迁移（状态机裁决）
-        if (!stateMachine.canTransition(ctx)) {
-            // 不迁移：但你仍然可以记录 evidence（可选）
-            beliefStore.insertEvidence(
-                    existingOpt.get().id(),
-                    userId,
-                    claim.status().name(),    // evidenceType
-                    claim.modality(),
-                    userText,
-                    claim.confidence()
-            );
-            return;
-        }
+        // 3️⃣ 状态机裁决：是否允许跃迁（只影响 status）
+        boolean canTransition = stateMachine.canTransition(ctx);
 
-        // 6) 计算新 confidence（ConfidenceUpdater 决策，不放 Controller）
+        // 4️⃣ 计算新 confidence（⚠️ 永远执行）
         double newConfidence = confidenceUpdater.apply(
                 currentConfidence,
                 fromStatus,
@@ -117,27 +101,32 @@ public class UserPersonaAdvisor {
                 claim.confidence()
         );
 
-        // 7) upsert belief（只保留“当前认知状态”一条主记录，避免你截图那种重复）
+        // 5️⃣ 决定最终 epistemic_status
+        EpistemicStatus finalStatus = canTransition ? claim.status() : fromStatus;
+
+        // 6️⃣ 更新 belief_state（永远只保留一条）
         BeliefStore.BeliefRow row = beliefStore.upsertBelief(
                 userId,
                 claim.proposition(),
                 claim.surface(),
-                claim.status().name(),
+                finalStatus.name(),
                 newConfidence
         );
 
-        // 8) 记录 evidence（审计、回溯、未来做 hysteresis/回滚/撤销都靠它）
+        // 7️⃣ 记录 evidence（永远记录）
         beliefStore.insertEvidence(
-                row.id(),                     // beliefId
-                userId,                       // userId
-                claim.status().name(),         // evidenceType（CONFIRMED / DENIED）
-                claim.modality(),              // modality（assert / deny / hypothetical）
-                userText,                     // rawText（原始对话证据）
-                claim.confidence()             // confidence
+                row.id(),
+                userId,
+                claim.status().name(),
+                claim.modality(),
+                userText,
+                claim.confidence()
         );
+
+        // 8️⃣ 写入 Milvus（用最终状态）
         String memoryText = String.format(
                 "用户%s：%s（置信度 %.2f）",
-                claim.status() == EpistemicStatus.CONFIRMED ? "确认" : "否认",
+                finalStatus == CONFIRMED ? "确认" : "否认",
                 claim.surface(),
                 newConfidence
         );
@@ -148,11 +137,49 @@ public class UserPersonaAdvisor {
                 memoryText,
                 userId,
                 row.id(),
-                row.status().toString(),
+                finalStatus.name(),
                 newConfidence
         );
-
     }
+
+    /**
+     * 旧认知和新认知之间的状态同步（一致性传播） 否认旧事物同时也要肯定新事物，反之同理
+     * @param userId
+     * @param claim
+     */
+    private void propagateConsistency(String userId, ClaimExtractionResult.Claim claim) {
+        PredicateKey key = PredicateKey.parse(claim.proposition());
+
+        // 情形 1：否认具体实例 ⇒ 支持 any
+        if (!key.isAny() && claim.status() == EpistemicStatus.DENIED) {
+            PredicateKey anyKey = key.toAny();
+            beliefStore.bumpConfidence(
+                    userId,
+                    anyKey.toProposition(),
+                    0.2,
+                    EpistemicStatus.CONFIRMED
+            );
+        }
+
+        // 情形 2：确认 any ⇒ 打压所有具体实例
+        if (key.isAny() && claim.status() == EpistemicStatus.CONFIRMED) {
+            beliefStore.downscaleAllSpecifics(
+                    userId,
+                    key.name(),
+                    0.1
+            );
+        }
+
+        // 情形 3：否认 any ⇒ 打压所有具体实例
+        if (key.isAny() && claim.status() == EpistemicStatus.DENIED) {
+            beliefStore.downscaleAllSpecifics(
+                    userId,
+                    key.name(),
+                    0.0
+            );
+        }
+    }
+
 
 
 

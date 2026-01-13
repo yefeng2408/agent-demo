@@ -8,6 +8,7 @@ import java.util.List;
  */
 public record ClaimExtractionResult(
         boolean hasClaims,
+        //每一个独立的Claim都是记忆中的最小单元【domain】。需要做到防止记忆被污染
         List<Claim> claims
 ) {
 
