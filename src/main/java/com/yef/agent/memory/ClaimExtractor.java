@@ -4,7 +4,7 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Component;
 
 @Component
-@Deprecated
+@Deprecated(forRemoval = true)
 public class ClaimExtractor {
 
     private final ChatClient chatClient;

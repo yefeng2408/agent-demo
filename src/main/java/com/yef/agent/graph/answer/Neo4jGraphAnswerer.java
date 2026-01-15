@@ -51,145 +51,186 @@ public class Neo4jGraphAnswerer implements GraphAnswerer {
     }
 
     private AnswerResult answerOwns(String userId) {
-        List<Record> rows = queryClaims(userId, PredicateType.OWNS.name());
-        if (rows.isEmpty()) {
+        List<ClaimEvidence> evidences = queryClaims(userId, PredicateType.OWNS);
+        if (evidences.isEmpty()) {
             return AnswerResult.unanswered();
         }
-        Record top = rows.get(0); // 已按语义优先级排好
-        boolean polarity = top.get("polarity").asBoolean();
-        String objectId = top.get("objectId").asString();
-        double conf = top.get("confidence").asDouble();
+        ClaimEvidence top = evidences.get(0);
+        List<Citation> citations = toCitations(evidences);
+        ExtractedRelation relation = ExtractedRelation.fromEvidence(top, Source.QUESTION);
+        // 语义已经由排序 + evidence 决定
+        if (!top.polarity() && top.quantifier() == Quantifier.ANY && top.objectId().startsWith("CAR:")) {
+            return AnswerResult.ok(
+                    "我目前没有任何汽车。",
+                    relation,
+                    citations,
+                    null
+            );
+        }
 
-        ExtractedRelation relation = new ExtractedRelation(
-                userId,
-                PredicateType.OWNS,
-                "CAR:any",
-                Quantifier.ANY,
-                false,
-                Math.min(conf, 0.7),
-                Source.QUESTION
+        if (top.polarity()) {
+            return AnswerResult.ok(
+                    "我拥有车辆（相关对象：" + top.objectId() + "）。",
+                    relation,
+                    citations,
+                    null
+            );
+        }
+
+        return AnswerResult.ok(
+                "我不拥有某些车辆，但是否拥有汽车需要更多信息。",
+                relation,
+                citations,
+                null
         );
-
-        // ⚠️ 关键：这里没有 if ANY / ONE 的业务判断
-        // 语义已经由排序决定了
-        if (!polarity && objectId.startsWith("CAR:any")) {
-
-            return AnswerResult.ok("我目前没有任何汽车。", relation);
-        }
-        if (polarity) {
-            return AnswerResult.ok("我拥有车辆（相关对象：" + objectId + "）。", relation);
-        }
-        return AnswerResult.ok("我不拥有某些车辆，但是否拥有汽车需要更多信息。", relation);
     }
 
     /**
      * NAME / BORN_YEAR / HAS_ROLE 这类：ONE + polarity=true 的单值事实
      */
     private AnswerResult answerSingleValue(String userId,
-                                           String predicate,
+                                           PredicateType predicate,
                                            String objectPrefix,
                                            String template) {
-
-        List<Record> rows = queryClaims(userId, predicate);
+        List<ClaimEvidence> evidences = queryClaims(userId, predicate);
+        ClaimEvidence top = evidences.get(0);
         // 先找 polarity=true 的最高置信度
-        Optional<Record> best = rows.stream()
-                .filter(r -> r.get("polarity").asBoolean())
-                .filter(r -> r.get("confidence").asDouble() >= MIN_CONF)
-                .max(Comparator.comparingDouble(r -> r.get("confidence").asDouble()));
+        Optional<ClaimEvidence> best = evidences.stream()
+                .filter(e -> e.polarity())
+                .filter(e -> e.confidence() >= MIN_CONF)
+                .max(Comparator.comparingDouble(e -> e.confidence()));
 
         if (best.isEmpty()) return AnswerResult.unanswered();
 
-        String objectId = best.get().get("objectId").asString(); // e.g. NAME:叶丰
-        String value = stripPrefix(objectId, objectPrefix);
-        double conf = best.get().get("confidence").asDouble();
-        ExtractedRelation relation = new ExtractedRelation(
-                userId,
-                PredicateType.OWNS,
-                "CAR:any",
-                Quantifier.ANY,
-                false,
-                Math.min(conf, 0.7),
-                Source.QUESTION
-        );
+        List<Citation> citations = toCitations(evidences);
 
-        return AnswerResult.ok(String.format(template, value), relation);
+        String objectId = evidences.get(0).objectId(); // e.g. NAME:叶丰
+        String value = stripPrefix(objectId, objectPrefix);
+        ExtractedRelation relation = ExtractedRelation.fromEvidence(top, Source.QUESTION);
+        return AnswerResult.ok(String.format(template, value), relation,citations,null);
     }
 
     /**
-     * OWNS：优先 ANY 的否定，再找具体肯定
+     * 临时测试方法  OWNS：优先 ANY 的否定，再找具体肯定
      */
     private AnswerResult answerOwnsCar(String userId) {
-        List<Record> rows = queryClaims(userId, "OWNS");
+        List<ClaimEvidence> evidences = queryClaims(userId, PredicateType.OWNS);
+        ClaimEvidence top = evidences.get(0);
 
         // 1) ANY 且否定：我没有任何车
-        Optional<Record> deniedAny = rows.stream()
-                .filter(r -> "ANY".equalsIgnoreCase(r.get("quantifier").asString()))
-                .filter(r -> !r.get("polarity").asBoolean())
-                .filter(r -> r.get("confidence").asDouble() >= MIN_CONF)
-                .max(Comparator.comparingDouble(r -> r.get("confidence").asDouble()));
-        double conf = deniedAny.get().get("confidence").asDouble();
+        Optional<ClaimEvidence> deniedAny = evidences.stream()
+                .filter(e -> "ANY".equalsIgnoreCase(e.quantifier().name()))
+                .filter(e -> !e.polarity())
+                .filter(e -> e.confidence() >= MIN_CONF)
+                .max(Comparator.comparingDouble(r -> r.confidence()));
 
-        ExtractedRelation extractedRelation = new ExtractedRelation(
-                userId,
-                PredicateType.OWNS,
-                "CAR:any",
-                Quantifier.ANY,
-                false,
-                Math.min(conf, 0.7),
-                Source.QUESTION
-        );
+        ExtractedRelation relation = ExtractedRelation.fromEvidence(top, Source.QUESTION);
+        List<Citation> citations = toCitations(evidences);
 
         if (deniedAny.isPresent()) {
-            return AnswerResult.ok("我目前没有任何汽车。", extractedRelation);
+            return AnswerResult.ok("我目前没有任何汽车。", relation,citations,null);
         }
         // 2) 找具体肯定（例如 BRAND:Tesla / CAR:xxx）
-        Optional<Record> bestPositive = rows.stream()
-                .filter(r -> r.get("polarity").asBoolean())
-                .filter(r -> r.get("confidence").asDouble() >= MIN_CONF)
-                .max(Comparator.comparingDouble(r -> r.get("confidence").asDouble()));
+        Optional<ClaimEvidence> bestPositive = evidences.stream()
+                .filter(e -> e.polarity())
+                .filter(e -> e.confidence()>= MIN_CONF)
+                .max(Comparator.comparingDouble(e -> e.confidence()));
 
         if (bestPositive.isPresent()) {
-            String objectId = bestPositive.get().get("objectId").asString();
-            return AnswerResult.ok("我有车（相关对象：" + objectId + "）。", extractedRelation);
+            String objectId = bestPositive.get().objectId();
+            return AnswerResult.ok("我有车（相关对象：" + objectId + "）。", relation,citations,null);
         }
 
         // 3) 有具体否定但没有 ANY（比如否定特斯拉，但不代表没车）
-        boolean deniedSome = rows.stream()
-                .anyMatch(r -> !r.get("polarity").asBoolean() && r.get("confidence").asDouble() >= MIN_CONF);
+        boolean deniedSome = evidences.stream()
+                .anyMatch(e -> !e.polarity() && e.confidence() >= MIN_CONF);
 
         if (deniedSome) {
-            return AnswerResult.ok("我能确定我不拥有其中某些车（例如特定品牌），但是否有车需要更多信息。", extractedRelation);
+            return AnswerResult.ok("我能确定我不拥有其中某些车（例如特定品牌），但是否有车需要更多信息。", relation,citations,null);
         }
-
         return AnswerResult.unanswered();
     }
 
-    private List<Record> queryClaims(String userId, String predicate) {
-        String cypher = """
-        MATCH (u:User {id:$uid})-[:ASSERTS]->(c:Claim)
-        WHERE c.predicate = $pred AND c.confidence >= $minConf
-        WITH c,
-        CASE
-          WHEN toUpper(c.quantifier) = 'ANY' AND c.polarity = false THEN 0
-          WHEN toUpper(c.quantifier) = 'ANY' AND c.polarity = true  THEN 1
-          WHEN toUpper(c.quantifier) = 'ONE' AND c.polarity = true  THEN 2
-          WHEN toUpper(c.quantifier) = 'ONE' AND c.polarity = false THEN 3
-          ELSE 9
-        END AS pri
-        RETURN c.objectId AS objectId,
-               c.quantifier AS quantifier,
-               c.polarity AS polarity,
-               c.confidence AS confidence,
-               c.updatedAt AS updatedAt,
-               pri AS pri
-        ORDER BY pri ASC, c.confidence DESC, c.updatedAt DESC
-        """;
+    private List<Citation> toCitations(List<ClaimEvidence> rows) {
+        List<Citation> citations = new ArrayList<>();
+        for(ClaimEvidence  claimEvi : rows) {
+            Citation citation =new Citation(
+                    claimEvi.predicate().name(),
+                    claimEvi.subjectId(),
+                    claimEvi.objectId(),
+                    claimEvi.quantifier().name(),
+                    claimEvi.polarity(),
+                    claimEvi.confidence(),
+                    claimEvi.source().name(),
+                    claimEvi.batch(),
+                    claimEvi.updatedAt()
+            );
+            citations.add(citation);
+        }
+        return citations;
+    }
 
+
+    private List<ClaimEvidence> queryClaims(String userId, PredicateType predicate) {
+        String cypher = """
+                    MATCH (u:User {id:$uid})-[:ASSERTS]->(c:Claim)
+                    WHERE c.predicate = $pred AND c.confidence >= $minConf
+                    WITH c,
+                    CASE
+                      WHEN toUpper(c.quantifier) = 'ANY' AND c.polarity = false THEN 0
+                      WHEN toUpper(c.quantifier) = 'ANY' AND c.polarity = true  THEN 1
+                      WHEN toUpper(c.quantifier) = 'ONE' AND c.polarity = true  THEN 2
+                      WHEN toUpper(c.quantifier) = 'ONE' AND c.polarity = false THEN 3
+                      ELSE 9
+                    END AS pri
+                    RETURN
+                      c.subjectId  AS subjectId,
+                      c.predicate  AS predicate,
+                      c.objectId   AS objectId,
+                      c.quantifier AS quantifier,
+                      c.polarity   AS polarity,
+                      c.confidence AS confidence,
+                      c.source     AS source,
+                      c.batch      AS batch,
+                      c.updatedAt  AS updatedAt,
+                      pri          AS priority
+                    ORDER BY pri ASC, c.confidence DESC, c.updatedAt DESC
+                    """;
         try (Session session = driver.session()) {
             return session.executeRead(tx ->
-                    tx.run(cypher, parameters("uid", userId, "pred", predicate, "minConf", MIN_CONF)).list()
+                    tx.run(cypher, parameters(
+                            "uid", userId,
+                            "pred", predicate.name(),
+                            "minConf", MIN_CONF
+                    )).list(record -> new ClaimEvidence(
+                            record.get("subjectId").asString(),
+                            PredicateType.valueOf(record.get("predicate").asString()),
+                            record.get("objectId").asString(),
+                            Quantifier.valueOf(record.get("quantifier").asString()),
+                            record.get("polarity").asBoolean(),
+                            record.get("confidence").asDouble(),
+                            parseSource(record),
+                            record.get("batch").isNull() ? null : record.get("batch").asString(),
+                            record.get("updatedAt").isNull() ? null
+                                    : record.get("updatedAt").asZonedDateTime().toInstant(),
+                            record.get("priority").asInt()
+                    ))
             );
         }
+    }
+
+    private Source parseSource(Record record) {
+        if (record.get("source").isNull()) {
+            return Source.USER_STATEMENT;
+        }
+        String raw = record.get("source").asString().toUpperCase();
+        return switch (raw) {
+            case "USER", "USER_STATEMENT", "V2" -> Source.USER_STATEMENT;
+            case "QUESTION" -> Source.QUESTION;
+            case "SYSTEM" -> Source.SYSTEM;
+            case "SELF_CORRECTION" -> Source.SELF_CORRECTION;
+            default -> Source.SYSTEM; // 兜底，防脏数据
+        };
     }
 
     private static String stripPrefix(String s, String prefix) {

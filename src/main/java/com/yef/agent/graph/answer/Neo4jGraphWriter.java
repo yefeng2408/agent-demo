@@ -1,3 +1,4 @@
+/*
 package com.yef.agent.graph.answer;
 
 import com.yef.agent.graph.ExtractedRelation;
@@ -75,4 +76,4 @@ public class Neo4jGraphWriter implements GraphWriter {
             });
         }
     }
-}
+}*/

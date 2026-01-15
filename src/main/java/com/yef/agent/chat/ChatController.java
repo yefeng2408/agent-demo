@@ -2,11 +2,12 @@ package com.yef.agent.chat;
 
 import com.yef.agent.advisor.PersonaMemoryAdvisor;
 import com.yef.agent.advisor.UserPersonaAdvisor;
-import com.yef.agent.graph.ExtractedRelation;
+//import com.yef.agent.graph.GraphReasoningContextBuilder;
 import com.yef.agent.graph.answer.AnswerResult;
-import com.yef.agent.graph.answer.GraphWriter;
 import com.yef.agent.graph.answer.Neo4jGraphAnswerer;
-import com.yef.agent.graph.answer.Neo4jGraphWriter;
+import com.yef.agent.graph.llm.LlmPolisher;
+import com.yef.agent.graph.writer.Neo4jGraphWriter;
+import com.yef.agent.service.ClaimConfidenceService;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -26,49 +27,64 @@ public class ChatController {
     private final PersonaMemoryAdvisor personaMemoryAdvisor;
     private final UserPersonaAdvisor userPersonaAdvisor;
     private final Neo4jGraphAnswerer graphAnswerer;
-    private final Neo4jGraphWriter graphWriter;
+   // private final Neo4jGraphWriter graphWriter;
+    private final LlmPolisher llmPolisher;
+    private final Neo4jGraphWriter neo4jGraphWriter;
+    private final ClaimConfidenceService claimConfidenceService;
 
     public ChatController(@Qualifier("personalChatClient") ChatClient personalChatClient,
                           PersonaMemoryAdvisor personaMemoryAdvisor,
                           UserPersonaAdvisor userPersonaAdvisor,
                           Neo4jGraphAnswerer graphAnswerer,
-                          Neo4jGraphWriter graphWriter) {
+                          LlmPolisher llmPolisher,
+                          Neo4jGraphWriter neo4jGraphWriter,
+                          ClaimConfidenceService claimConfidenceService) {
         this.personalChatClient = personalChatClient;
         this.personaMemoryAdvisor = personaMemoryAdvisor;
         this.userPersonaAdvisor = userPersonaAdvisor;
         this.graphAnswerer=graphAnswerer;
-        this.graphWriter=graphWriter;
+        this.llmPolisher = llmPolisher;
+        this.neo4jGraphWriter=neo4jGraphWriter;
+        this.claimConfidenceService=claimConfidenceService;
     }
 
 
     /**
-     * ChatController
-     *   → GraphRelationExtractorV3
-     *      → Neo4jGraphWriter
-     *   → Neo4jGraphAnswerer
-     *      → 组装语义 → LLM
+     * User Question
+     *    ↓
+     * GraphAnswerer（裁决）
+     *    ↓
+     * ExtractedRelation（Decision）
+     *    ↓
+     * Citations（Evidence）
+     *    ↓
+     * LLM Explainer（只解释）
+     *    ↓
+     * Neo4jGraphWriter.writeAnswer（写回）
+     *    ↓
+     * ClaimConfidenceService（状态更新）
+     * 
      * @param msg
      * @param userId
      * @return
      */
     @GetMapping("/personal")
     public String chat(@RequestParam String msg, @RequestParam(defaultValue = "debug-user") String userId) {
-        // ===============================
         // ✅ Step 1: Graph 优先裁决（v3 核心）
-        // ===============================
         AnswerResult graphAnswer = graphAnswerer.answer(userId, msg);
         if (graphAnswer.answered()) {
-            // ✅ Step 3.5：回答 → 写图（闭环）
-            ExtractedRelation relation = graphAnswer.extractedRelation();
-            if (relation != null) {
-                graphWriter.writeRelation(relation);
-            }
-            // 这里可以选择是否再让 LLM polish
-            return graphAnswer.answer();
+            String explain = llmPolisher.explain(graphAnswer);
+            neo4jGraphWriter.writeAnswer(
+                    userId,
+                    graphAnswer.relation(),
+                    graphAnswer.citations(),
+                    explain
+            );
+            claimConfidenceService.applyAnswer(userId, graphAnswer);
+            return explain;
         }
-        // ===============================
+
         // ⬇️ Step 2: LLM fallback（v2 仍在）
-        // ===============================
         Map<String, Object> metadata = new HashMap<>();
 
         // 2.1 请求前处理（v2 记忆逻辑）
