@@ -1,6 +1,7 @@
 package com.yef.agent.graph;
 
 import com.yef.agent.graph.answer.ClaimEvidence;
+import com.yef.agent.graph.eum.ClaimGeneration;
 import com.yef.agent.graph.eum.PredicateType;
 import com.yef.agent.graph.eum.Quantifier;
 import com.yef.agent.graph.eum.Source;
@@ -12,8 +13,18 @@ public record ExtractedRelation(
         Quantifier quantifier,// ONE / ANY
         boolean polarity,     // true=肯定，false=否定
         double confidence,    // 0.0 ~ 1.0（语言确定性，不是事实真值）
-        Source source         // USER_STATEMENT / SELF_CORRECTION / QUESTION
+        Source source,         // USER_STATEMENT / SELF_CORRECTION / QUESTION
+        ClaimGeneration generation
 ) {
+
+    public ClaimGeneration generation() {
+        return ClaimGeneration.V3;
+    }
+
+    public boolean isLegacy() {
+        return generation.isLegacy();
+    }
+
     public static ExtractedRelation fromEvidence(ClaimEvidence e, Source source) {
         return new ExtractedRelation(
                 e.subjectId(),
@@ -22,7 +33,9 @@ public record ExtractedRelation(
                 e.quantifier(),
                 e.polarity(),
                 normalizeConfidence(e.confidence()),
-                source
+                source,
+                ClaimGeneration.V3
+
         );
     }
 

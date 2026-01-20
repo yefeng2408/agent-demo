@@ -7,8 +7,10 @@ import com.yef.agent.graph.eum.Source;
 import org.neo4j.driver.*;
 import org.neo4j.driver.Record;
 import org.springframework.stereotype.Component;
+
 import java.util.*;
 import java.util.regex.Pattern;
+
 import static org.neo4j.driver.Values.parameters;
 
 @Component
@@ -55,34 +57,39 @@ public class Neo4jGraphAnswerer implements GraphAnswerer {
         if (evidences.isEmpty()) {
             return AnswerResult.unanswered();
         }
+        //“破坏性最大”，一旦它信任了它，则其它claim则被全面推翻。所以药对它优先裁决
         ClaimEvidence top = evidences.get(0);
         List<Citation> citations = toCitations(evidences);
         ExtractedRelation relation = ExtractedRelation.fromEvidence(top, Source.QUESTION);
-        // 语义已经由排序 + evidence 决定
-        if (!top.polarity() && top.quantifier() == Quantifier.ANY && top.objectId().startsWith("CAR:")) {
-            return AnswerResult.ok(
-                    "我目前没有任何汽车。",
-                    relation,
-                    citations,
-                    null
-            );
-        }
-
         if (top.polarity()) {
             return AnswerResult.ok(
                     "我拥有车辆（相关对象：" + top.objectId() + "）。",
                     relation,
                     citations,
-                    null
-            );
+                    null);
         }
 
         return AnswerResult.ok(
                 "我不拥有某些车辆，但是否拥有汽车需要更多信息。",
                 relation,
                 citations,
-                null
-        );
+                null);
+    }
+
+    String explainOwns(ClaimEvidence c) {
+        if (c.quantifier() == Quantifier.ANY && !c.polarity()) {
+            return "我目前没有任何车辆。";
+        }
+        if (c.quantifier() == Quantifier.ANY && c.polarity()) {
+            return "我至少拥有一辆车。";
+        }
+        if (c.quantifier() == Quantifier.ONE && c.polarity()) {
+            return "我拥有一辆车（" + c.objectId() + "）。";
+        }
+        if (c.quantifier() == Quantifier.ONE && !c.polarity()) {
+            return "我目前不拥有这辆车（" + c.objectId() + "）。";
+        }
+        return "关于我是否拥有车辆，目前信息不足。";
     }
 
     /**
@@ -107,7 +114,7 @@ public class Neo4jGraphAnswerer implements GraphAnswerer {
         String objectId = evidences.get(0).objectId(); // e.g. NAME:叶丰
         String value = stripPrefix(objectId, objectPrefix);
         ExtractedRelation relation = ExtractedRelation.fromEvidence(top, Source.QUESTION);
-        return AnswerResult.ok(String.format(template, value), relation,citations,null);
+        return AnswerResult.ok(String.format(template, value), relation, citations, null);
     }
 
     /**
@@ -128,17 +135,17 @@ public class Neo4jGraphAnswerer implements GraphAnswerer {
         List<Citation> citations = toCitations(evidences);
 
         if (deniedAny.isPresent()) {
-            return AnswerResult.ok("我目前没有任何汽车。", relation,citations,null);
+            return AnswerResult.ok("我目前没有任何汽车。", relation, citations, null);
         }
         // 2) 找具体肯定（例如 BRAND:Tesla / CAR:xxx）
         Optional<ClaimEvidence> bestPositive = evidences.stream()
                 .filter(e -> e.polarity())
-                .filter(e -> e.confidence()>= MIN_CONF)
+                .filter(e -> e.confidence() >= MIN_CONF)
                 .max(Comparator.comparingDouble(e -> e.confidence()));
 
         if (bestPositive.isPresent()) {
             String objectId = bestPositive.get().objectId();
-            return AnswerResult.ok("我有车（相关对象：" + objectId + "）。", relation,citations,null);
+            return AnswerResult.ok("我有车（相关对象：" + objectId + "）。", relation, citations, null);
         }
 
         // 3) 有具体否定但没有 ANY（比如否定特斯拉，但不代表没车）
@@ -146,15 +153,15 @@ public class Neo4jGraphAnswerer implements GraphAnswerer {
                 .anyMatch(e -> !e.polarity() && e.confidence() >= MIN_CONF);
 
         if (deniedSome) {
-            return AnswerResult.ok("我能确定我不拥有其中某些车（例如特定品牌），但是否有车需要更多信息。", relation,citations,null);
+            return AnswerResult.ok("我能确定我不拥有其中某些车（例如特定品牌），但是否有车需要更多信息。", relation, citations, null);
         }
         return AnswerResult.unanswered();
     }
 
     private List<Citation> toCitations(List<ClaimEvidence> rows) {
         List<Citation> citations = new ArrayList<>();
-        for(ClaimEvidence  claimEvi : rows) {
-            Citation citation =new Citation(
+        for (ClaimEvidence claimEvi : rows) {
+            Citation citation = new Citation(
                     claimEvi.predicate().name(),
                     claimEvi.subjectId(),
                     claimEvi.objectId(),
@@ -173,29 +180,32 @@ public class Neo4jGraphAnswerer implements GraphAnswerer {
 
     private List<ClaimEvidence> queryClaims(String userId, PredicateType predicate) {
         String cypher = """
-                    MATCH (u:User {id:$uid})-[:ASSERTS]->(c:Claim)
-                    WHERE c.predicate = $pred AND c.confidence >= $minConf
-                    WITH c,
-                    CASE
-                      WHEN toUpper(c.quantifier) = 'ANY' AND c.polarity = false THEN 0
-                      WHEN toUpper(c.quantifier) = 'ANY' AND c.polarity = true  THEN 1
-                      WHEN toUpper(c.quantifier) = 'ONE' AND c.polarity = true  THEN 2
-                      WHEN toUpper(c.quantifier) = 'ONE' AND c.polarity = false THEN 3
-                      ELSE 9
-                    END AS pri
-                    RETURN
-                      c.subjectId  AS subjectId,
-                      c.predicate  AS predicate,
-                      c.objectId   AS objectId,
-                      c.quantifier AS quantifier,
-                      c.polarity   AS polarity,
-                      c.confidence AS confidence,
-                      c.source     AS source,
-                      c.batch      AS batch,
-                      c.updatedAt  AS updatedAt,
-                      pri          AS priority
-                    ORDER BY pri ASC, c.confidence DESC, c.updatedAt DESC
-                    """;
+                MATCH (u:User {id:$uid})-[:ASSERTS]->(c:Claim)
+                WHERE 
+                    c.predicate = $pred 
+                AND c.legacy = false
+                AND c.confidence >= $minConf
+                WITH c,
+                CASE
+                  WHEN toUpper(c.quantifier) = 'ANY' AND c.polarity = false THEN 0
+                  WHEN toUpper(c.quantifier) = 'ANY' AND c.polarity = true  THEN 1
+                  WHEN toUpper(c.quantifier) = 'ONE' AND c.polarity = true  THEN 2
+                  WHEN toUpper(c.quantifier) = 'ONE' AND c.polarity = false THEN 3
+                  ELSE 9
+                END AS pri
+                RETURN
+                  c.subjectId  AS subjectId,
+                  c.predicate  AS predicate,
+                  c.objectId   AS objectId,
+                  c.quantifier AS quantifier,
+                  c.polarity   AS polarity,
+                  c.confidence AS confidence,
+                  c.source     AS source,
+                  c.batch      AS batch,
+                  c.updatedAt  AS updatedAt,
+                  pri          AS priority
+                ORDER BY pri ASC, c.confidence DESC, c.updatedAt DESC
+                """;
         try (Session session = driver.session()) {
             return session.executeRead(tx ->
                     tx.run(cypher, parameters(

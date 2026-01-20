@@ -8,7 +8,6 @@ import org.neo4j.driver.Session;
 import org.springframework.stereotype.Component;
 import java.util.List;
 import java.util.Map;
-
 import static org.neo4j.driver.Values.parameters;
 
 @Component
@@ -21,6 +20,16 @@ public class Neo4jGraphWriter implements GraphWriter {
     }
 
     /**
+     * 它做的事是：
+     * 	•	写一个 Answer 节点
+     * 	•	建立 Answer -> Claim (CITES) 关系
+     * 	•	记录「这次系统是基于哪些 Claim 说了这句话」
+     *
+     * 👉 这是“系统说了什么 & 引用了什么”
+     *
+     * 重要原则：
+     *
+     * writeAnswer 不允许生成新 Claim，也不允许改变 Claim 的状态
      * writeAnswer 必须是“无副作用事实写入”，不可生成 Claim
      * @param userId
      * @param decision
@@ -41,7 +50,7 @@ public class Neo4jGraphWriter implements GraphWriter {
                         "objectId", c.objectId()
                 )).toList();
         String cypher = """
-                MATCH (u:User {id:$uid})
+                MERGE (u:User {id:$uid})
                 
                 CREATE (a:Answer {
                   id: randomUUID(),

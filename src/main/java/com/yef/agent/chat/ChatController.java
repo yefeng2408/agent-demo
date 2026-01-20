@@ -83,16 +83,14 @@ public class ChatController {
             claimConfidenceService.applyAnswer(userId, graphAnswer);
             return explain;
         }
-
         // ⬇️ Step 2: LLM fallback（v2 仍在）
         Map<String, Object> metadata = new HashMap<>();
-
+        metadata.put("readOnly", true);
+        //metadata.put("disableClaimWrite", true);
         // 2.1 请求前处理（v2 记忆逻辑）
         personaMemoryAdvisor.onRequest(msg, metadata);
-
         // 2.2 拉取用户历史记忆（目前仍来自 MySQL / Milvus）
         List<String> memories = userPersonaAdvisor.getUserMemories(userId);
-
         String systemPrompt = """
             你是一个有长期记忆的 AI 助手。
             以下是你已知的关于用户的信息：
@@ -107,9 +105,12 @@ public class ChatController {
                 .user(msg)
                 .call()
                 .content();
-
+        if (Boolean.TRUE.equals(metadata.get("disableClaimWrite"))) {
+            return answer; // 禁止写 Claim
+        }
         // 2.4 响应后处理（⚠️ 这里以后会被 GraphExtraction 替换）
         personaMemoryAdvisor.onResponse(userId, msg, answer);
         return answer;
     }
+
 }
