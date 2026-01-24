@@ -3,8 +3,12 @@ package com.yef.agent.chat;
 import com.yef.agent.advisor.PersonaMemoryAdvisor;
 import com.yef.agent.advisor.UserPersonaAdvisor;
 //import com.yef.agent.graph.GraphReasoningContextBuilder;
+import com.yef.agent.graph.ExtractedRelation;
 import com.yef.agent.graph.answer.AnswerResult;
 import com.yef.agent.graph.answer.Neo4jGraphAnswerer;
+import com.yef.agent.graph.eum.ClaimGeneration;
+import com.yef.agent.graph.eum.PredicateType;
+import com.yef.agent.graph.eum.Quantifier;
 import com.yef.agent.graph.llm.LlmPolisher;
 import com.yef.agent.graph.writer.Neo4jGraphWriter;
 import com.yef.agent.service.ClaimConfidenceService;
@@ -78,9 +82,9 @@ public class ChatController {
                     userId,
                     graphAnswer.relation(),
                     graphAnswer.citations(),
-                    explain
-            );
-            claimConfidenceService.applyAnswer(userId, graphAnswer);
+                    explain);
+            ExtractedRelation newExtractedRelation = extractFromMsg(msg, userId);
+            claimConfidenceService.applyAnswer(userId, graphAnswer,newExtractedRelation);
             return explain;
         }
         // ⬇️ Step 2: LLM fallback（v2 仍在）
@@ -111,6 +115,28 @@ public class ChatController {
         // 2.4 响应后处理（⚠️ 这里以后会被 GraphExtraction 替换）
         personaMemoryAdvisor.onResponse(userId, msg, answer);
         return answer;
+    }
+
+    //(subjectId=userId, predicate, objectId, quantifier, polarity)
+   public ExtractedRelation extractFromMsg(String msg, String userId) {
+        if (msg.contains("不拥有") || msg.contains("没有")) {
+            return ExtractedRelation.forUserStatement(
+                    userId,
+                    PredicateType.OWNS,
+                    "BRAND:Tesla",
+                    Quantifier.ONE,
+                    false);
+
+        }
+        if (msg.contains("拥有")) {
+            return ExtractedRelation.forUserStatement(
+                    userId,
+                    PredicateType.OWNS,
+                    "BRAND:Tesla",
+                    Quantifier.ONE,
+                    true);
+        }
+        return null;
     }
 
 }

@@ -4,19 +4,18 @@ import com.yef.agent.graph.ExtractedRelation;
 import com.yef.agent.graph.eum.PredicateType;
 import com.yef.agent.graph.eum.Quantifier;
 import com.yef.agent.graph.eum.Source;
+import com.yef.agent.memory.EpistemicStatus;
 import org.neo4j.driver.*;
 import org.neo4j.driver.Record;
 import org.springframework.stereotype.Component;
-
 import java.util.*;
 import java.util.regex.Pattern;
-
 import static org.neo4j.driver.Values.parameters;
 
 @Component
 public class Neo4jGraphAnswerer implements GraphAnswerer {
 
-    private final Driver driver;
+    private static Driver driver = null;
 
     // 你先用最简单的“意图识别”，后面 Step3.2 用 LLM 产 enum 再替换这里
     private static final Pattern Q_NAME = Pattern.compile("你叫啥|你是谁|名字", Pattern.CASE_INSENSITIVE);
@@ -28,7 +27,7 @@ public class Neo4jGraphAnswerer implements GraphAnswerer {
     private static final double MIN_CONF = 0.6;
 
     public Neo4jGraphAnswerer(Driver driver) {
-        this.driver = driver;
+        Neo4jGraphAnswerer.driver = driver;
     }
 
     @Override
@@ -57,24 +56,33 @@ public class Neo4jGraphAnswerer implements GraphAnswerer {
         if (evidences.isEmpty()) {
             return AnswerResult.unanswered();
         }
-        //“破坏性最大”，一旦它信任了它，则其它claim则被全面推翻。所以药对它优先裁决
+
+        //“破坏性最大”，一旦它信任了它，则其它claim则被全面推翻。所以要对它优先裁决
         ClaimEvidence top = evidences.get(0);
         List<Citation> citations = toCitations(evidences);
         ExtractedRelation relation = ExtractedRelation.fromEvidence(top, Source.QUESTION);
-        if (top.polarity()) {
+        if (top.polarity() && top.epistemicStatus() == EpistemicStatus.CONFIRMED) {
             return AnswerResult.ok(
-                    "我拥有车辆（相关对象：" + top.objectId() + "）。",
+                    "我目前拥有一辆特斯拉。",
                     relation,
                     citations,
                     null);
+        } else if (!top.polarity() && top.epistemicStatus() == EpistemicStatus.CONFIRMED) {
+            return AnswerResult.ok(
+                    "我目前并不拥有特斯拉。",
+                    relation,
+                    citations,
+                    null);
+        }else {
+            return AnswerResult.ok(
+                    "关于我是否拥有特斯拉，目前存在相互矛盾的证据，尚未形成稳定结论。",
+                    relation,
+                    citations,
+                    null
+            );
         }
-
-        return AnswerResult.ok(
-                "我不拥有某些车辆，但是否拥有汽车需要更多信息。",
-                relation,
-                citations,
-                null);
     }
+
 
     String explainOwns(ClaimEvidence c) {
         if (c.quantifier() == Quantifier.ANY && !c.polarity()) {
@@ -178,7 +186,7 @@ public class Neo4jGraphAnswerer implements GraphAnswerer {
     }
 
 
-    private List<ClaimEvidence> queryClaims(String userId, PredicateType predicate) {
+    public static List<ClaimEvidence> queryClaims(String userId, PredicateType predicate) {
         String cypher = """
                 MATCH (u:User {id:$uid})-[:ASSERTS]->(c:Claim)
                 WHERE 
@@ -199,6 +207,7 @@ public class Neo4jGraphAnswerer implements GraphAnswerer {
                   c.objectId   AS objectId,
                   c.quantifier AS quantifier,
                   c.polarity   AS polarity,
+                  c.epistemicStatus AS epistemicStatus,
                   c.confidence AS confidence,
                   c.source     AS source,
                   c.batch      AS batch,
@@ -218,6 +227,7 @@ public class Neo4jGraphAnswerer implements GraphAnswerer {
                             record.get("objectId").asString(),
                             Quantifier.valueOf(record.get("quantifier").asString()),
                             record.get("polarity").asBoolean(),
+                            EpistemicStatus.valueOf(record.get("epistemicStatus").asString()),
                             record.get("confidence").asDouble(),
                             parseSource(record),
                             record.get("batch").isNull() ? null : record.get("batch").asString(),
@@ -229,7 +239,32 @@ public class Neo4jGraphAnswerer implements GraphAnswerer {
         }
     }
 
-    private Source parseSource(Record record) {
+    public static boolean claimExistsRaw(String userId, ExtractedRelation r) {
+        String cypher = """
+        MATCH (u:User {id:$uid})-[:ASSERTS]->(c:Claim)
+        WHERE c.predicate = $pred
+          AND c.objectId = $obj
+          AND c.quantifier = $quant
+          AND c.polarity = $pol
+          AND c.legacy = false
+        RETURN count(c) > 0 AS exists
+        """;
+        try (Session session = driver.session()) {
+            return session.executeRead(tx ->
+                    tx.run(cypher, Map.of(
+                                    "uid", userId,
+                                    "pred", r.predicateType().name(),
+                                    "obj", r.objectId(),
+                                    "quant", r.quantifier().name(),
+                                    "pol", r.polarity()
+                            ))
+                            .single()
+                            .get("exists")
+                            .asBoolean() );
+        }
+    }
+
+    public static Source parseSource(Record record) {
         if (record.get("source").isNull()) {
             return Source.USER_STATEMENT;
         }

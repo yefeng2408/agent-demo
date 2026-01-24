@@ -1,11 +1,14 @@
 package com.yef.agent.graph;
 
+import com.yef.agent.graph.answer.Citation;
 import com.yef.agent.graph.answer.ClaimEvidence;
 import com.yef.agent.graph.eum.ClaimGeneration;
 import com.yef.agent.graph.eum.PredicateType;
 import com.yef.agent.graph.eum.Quantifier;
 import com.yef.agent.graph.eum.Source;
-
+import lombok.AllArgsConstructor;
+// Claim Semantic Key（语义主键）
+//(subjectId, predicate, objectId, quantifier, polarity)
 public record ExtractedRelation(
         String subjectId,     // USER / PERSON:xxx / ORG:xxx
         PredicateType predicateType,  // 枚举，绝不自由文本
@@ -16,6 +19,7 @@ public record ExtractedRelation(
         Source source,         // USER_STATEMENT / SELF_CORRECTION / QUESTION
         ClaimGeneration generation
 ) {
+
 
     public ClaimGeneration generation() {
         return ClaimGeneration.V3;
@@ -61,5 +65,66 @@ public record ExtractedRelation(
                 source.name()
         );
     }
+
+    public static ExtractedRelation forUserStatement(
+            String subjectId,
+            PredicateType predicateType,
+            String objectId,
+            Quantifier quantifier,
+            boolean polarity) {
+        return new ExtractedRelation(
+                subjectId,
+                predicateType,
+                objectId,
+                quantifier,
+                polarity,
+                0.5,                      // ✅ 默认初始置信度
+                Source.USER_STATEMENT,    // ✅ 来自用户声明
+                ClaimGeneration.V3        // ✅ v3 认知系统
+        );
+    }
+
+
+    public static ExtractedRelation relationFromDominant(Citation dominant) {
+        return ExtractedRelation.forSystemEvolution(dominant);
+    }
+
+    /**
+     * 将citation对象转化为演化后的语义对象
+     * @param citation
+     * @return
+     */
+    public static ExtractedRelation forSystemEvolution(Citation citation) {
+        return new ExtractedRelation(
+                citation.subjectId(),
+                PredicateType.valueOf(citation.predicate()),
+                citation.objectId(),
+                Quantifier.valueOf(citation.quantifier()),
+                citation.polarity(),
+                citation.confidence(),
+                Source.EVOLUTION,    // ✅ 来自演化
+                ClaimGeneration.V3   // ✅ v3 认知系统
+        );
+    }
+
+    public static ExtractedRelation getOppositeExtract(Citation dominant) {
+        return ExtractedRelation.forOppositeExtract(dominant);
+    }
+
+    public static ExtractedRelation forOppositeExtract(Citation citation) {
+        return new ExtractedRelation(
+                citation.subjectId(),
+                PredicateType.valueOf(citation.predicate()),
+                citation.objectId(),
+                Quantifier.valueOf(citation.quantifier()),
+                !citation.polarity(),
+                citation.confidence(),
+                Source.EVOLUTION,    // ✅ 来自演化
+                ClaimGeneration.V3   // ✅ v3 认知系统
+        );
+    }
+
+
+
 
 }
