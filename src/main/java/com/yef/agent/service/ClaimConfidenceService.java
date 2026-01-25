@@ -229,9 +229,8 @@ public class ClaimConfidenceService {
             c.updatedAt = datetime()
         RETURN c.updatedAt AS updatedAt
         """;
-        Instant updatedAt;
         try (Session session = driver.session()) {
-            var rec = session.executeWrite(tx ->
+             session.executeWrite(tx ->
                     tx.run(cypher, parameters(
                             "uid", userId,
                             "sid", dominant.subjectId(),
@@ -242,7 +241,6 @@ public class ClaimConfidenceService {
                             "conf", newConfidence
                     )).single()
             );
-            updatedAt = rec.get("updatedAt").asZonedDateTime().toInstant();
         }
         ClaimDelta claimDelta = new ClaimDelta(
                 buildEvidenceKey(before),
