@@ -1,6 +1,7 @@
 package com.yef.agent.service;
 
 import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONObject;
 import com.yef.agent.graph.ExtractedRelation;
 import com.yef.agent.graph.answer.AnswerResult;
 import com.yef.agent.graph.answer.Citation;
@@ -10,15 +11,23 @@ import com.yef.agent.graph.eum.PredicateType;
 import com.yef.agent.graph.eum.Quantifier;
 import com.yef.agent.graph.eum.SemanticRelation;
 import com.yef.agent.graph.eum.Source;
+import com.yef.agent.memory.ClaimDelta;
+import com.yef.agent.memory.DeltaDirection;
 import com.yef.agent.memory.EpistemicStateMachine;
 import com.yef.agent.memory.EpistemicStatus;
+import com.yef.agent.memory.event.EpistemicEvent;
+import com.yef.agent.memory.event.OpposeEvent;
+import com.yef.agent.memory.event.SupportEvent;
 import lombok.extern.slf4j.Slf4j;
 import org.neo4j.driver.Driver;
 import org.neo4j.driver.Session;
 import org.springframework.stereotype.Component;
+
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 
 import static io.micrometer.core.instrument.config.MeterFilterReply.NEUTRAL;
 import static java.io.ObjectInputFilter.Status.REJECTED;
@@ -66,13 +75,15 @@ public class ClaimConfidenceService {
         evolveClaims(userId, result, newExtractedRelation);
 
         // 3.9.2.3 决策点：可能触发 epistemicStatus 状态迁移
-        maybeTransition(userId, r, "answer_loop");
+        //maybeTransition(userId, r, "answer_loop");
        /* if (nextStatus == EpistemicStatus.CONFIRMED) {
             reconcileOppositeClaims(userId, r, claimId);
         }*/
         // 4) 把 Answer 证据链挂上（如果你已经写 Answer 节点了）
         // linkAnswerSupportsClaim(...)
     }
+
+
 
     /**
      * 演化过程
@@ -99,12 +110,65 @@ public class ClaimConfidenceService {
         // 3) 判定同向 or 反向
         SemanticRelation rel = judgeRelation(newExtractedRelation, dominant);
         log.info("[EVOLVE] relation={}, dominantPol={}, newPol={}, key={}",
-                rel, dominant.polarity(), newExtractedRelation.polarity(), buildKey(newExtractedRelation));
+                rel, dominant.polarity(), newExtractedRelation.polarity(), buildLogKey(newExtractedRelation));
         // 4) 执行演化
         switch (rel) {
             case SUPPORT -> handleSupport(userId, dominant, newExtractedRelation);
             case OPPOSE  -> handleOppose(userId, dominant, newExtractedRelation);
             case NEUTRAL -> log.info("[EVOLVE] neutral, do nothing. userId={}", userId);
+        }
+    }
+
+    public void persistEpistemicEvent(String userId, EpistemicEvent event) {
+        String cypher = """
+        MATCH (u:User {id: $userId})
+        
+        CREATE (e:EpistemicEvent {
+          id: $eventId,
+          type: $type,
+          at: datetime($at),
+          reason: $reason,
+          triggerKey: $triggerKey
+        })
+        
+        CREATE (u)-[:EMITTED]->(e)
+        
+        WITH e
+        UNWIND $deltas AS d
+        
+        MATCH (c:Claim {key: d.claimKey})
+        
+        CREATE (e)-[:AFFECTS {
+          before: d.before,
+          after: d.after,
+          delta: d.delta,
+          direction: d.direction
+        }]->(c)
+        """;
+        //List<Map<String, Object>>
+        List deltas = event.deltas().stream()
+                .map(d -> Map.of(
+                        "claimKey", d.claimKey(),
+                        "before", d.beforeConfidence(),
+                        "after", d.afterConfidence(),
+                        "delta", d.delta(),
+                        "direction", d.direction().name()
+                ))
+                .toList();
+
+        try (Session session = driver.session()) {
+            session.executeWrite(tx -> {
+                tx.run(cypher, Map.of(
+                        "userId", userId,
+                        "eventId", event.eventId(),
+                        "type", event.type().name(),
+                        "at", event.at().toString(),
+                        "reason", event.reason(),
+                        "triggerKey", event.triggerKey(),
+                        "deltas", deltas
+                ));
+                return null;
+            });
         }
     }
 
@@ -115,92 +179,281 @@ public class ClaimConfidenceService {
      * @param r 用户当前聊天msg抽取的ExtractedRelation，是一个新的claim
      */
     private void handleSupport(String userId, Citation dominant, ExtractedRelation r) {
-        log.info("[EVOLVE][SUPPORT] userId={},key={}", userId, buildKey(r));
+        log.info("[EVOLVE][SUPPORT] userId={},key={}", userId, buildLogKey(r));
         double delta = computeDelta(dominant.confidence(), true);
         /*核心事情：提升 dominant 的置信度*/
         upsertAndSupport(userId,
                 ExtractedRelation.relationFromDominant(dominant),
                 computeDelta(dominant.confidence(), true) );
 
-        logSupportTrace(userId, dominant, r, delta, "user statement contradicts previous claim");
+        //logSupportTrace(userId, dominant, r, delta, "support");
+        ClaimDelta claimDelta = applySupportDelta(userId, dominant, delta);
+
+        maybeTransitionStatus(userId, JSONObject.parseObject(claimDelta.claimKey(),ClaimEvidence.class));
+
+        EpistemicEvent epistemicEvent =new SupportEvent(
+                UUID.randomUUID().toString(),
+                userId,
+                Instant.now(),
+                buildCitationKey(r),    // ✅ triggerKey：新抽取的 relation
+                "support",
+                buildCitationKey(dominant),  // ✅ 被支持的 claim
+                List.of(claimDelta));
+        persistEpistemicEvent(userId,epistemicEvent);
     }
 
-    private void logSupportTrace(
-            String userId,
-            Citation dominant,
-            ExtractedRelation supported,
-            double delta,
-            String reason) {
-        // 统一 claim key（系统级唯一身份）
-        String supportedKey = buildKey(supported);
-        // v1 规则：裁决本身就是证据
-        String evidenceKey = buildCitationKey(dominant);
-        String evidenceSource = dominant.source();
+    /**
+     * 它只做三件事（很干净）：
+     * 	1.	定位：用 dominant 的五元组 MATCH 到那条 Claim
+     * 	2.	更新：confidence += delta（clamp 到 0~1），写回 Neo4j，同时更新 updatedAt
+     * 	3.	返回快照：构造一个 updated ClaimEvidence，给 maybeTransitionStatus 用
+     * @param userId
+     * @param dominant
+     * @param delta
+     * @return
+     */
+    private ClaimDelta  applySupportDelta(String userId, Citation dominant, double delta) {
+        // 1) 读取“被支持的旧 claim”（dominant 对应的五元组）
+        ClaimEvidence before = loadClaimEvidence(
+                userId,
+                dominant.subjectId(),
+                PredicateType.valueOf(dominant.predicate()),
+                dominant.objectId(),
+                Quantifier.valueOf(dominant.quantifier()),
+                dominant.polarity()
+        );
+        // 2) 计算新值
+        double newConfidence = clamp(before.confidence() + delta, 0.0, 1.0);
+        // 3) 写回（这里只写 confidence + updatedAt；status 交给 maybeTransitionStatus 去记录迁移）
         String cypher = """
-        MATCH (u:User {id: $uid})
-        CREATE (t:SupportTrace {
-            id: randomUUID(),
-            userId: $uid,
-
-            supportedClaimKey: $sk,
-            delta: $delta,
-
-            evidenceKey: $ek,
-            evidenceSource: $es,
-
-            reason: $reason,
-            at: datetime()
+        MATCH (u:User {id:$uid})-[:ASSERTS]->(c:Claim {
+          subjectId:$sid,
+          predicate:$pred,
+          objectId:$oid,
+          quantifier:$q,
+          polarity:$pol
         })
+        SET c.confidence = $conf,
+            c.updatedAt = datetime()
+        RETURN c.updatedAt AS updatedAt
         """;
+        Instant updatedAt;
+        try (Session session = driver.session()) {
+            var rec = session.executeWrite(tx ->
+                    tx.run(cypher, parameters(
+                            "uid", userId,
+                            "sid", dominant.subjectId(),
+                            "pred", dominant.predicate(),
+                            "oid", dominant.objectId(),
+                            "q", dominant.quantifier(),
+                            "pol", dominant.polarity(),
+                            "conf", newConfidence
+                    )).single()
+            );
+            updatedAt = rec.get("updatedAt").asZonedDateTime().toInstant();
+        }
+        ClaimDelta claimDelta = new ClaimDelta(
+                buildEvidenceKey(before),
+                before.confidence(),
+                newConfidence,
+                delta,
+                DeltaDirection.UP
+        );
+        return claimDelta;
+    }
+
+
+
+
+    private ClaimEvidence loadClaimEvidence(
+            String userId,
+            String subjectId,
+            PredicateType predicate,
+            String objectId,
+            Quantifier quantifier,
+            boolean polarity
+    ) {
+        String cypher = """
+        MATCH (u:User {id:$uid})-[:ASSERTS]->(c:Claim {
+          subjectId:$sid,
+          predicate:$pred,
+          objectId:$oid,
+          quantifier:$q,
+          polarity:$pol
+        })
+        RETURN
+          c.subjectId AS subjectId,
+          c.predicate AS predicate,
+          c.objectId AS objectId,
+          c.quantifier AS quantifier,
+          c.polarity AS polarity,
+          c.epistemicStatus AS epistemicStatus,
+          coalesce(c.confidence, 0.5) AS confidence,
+          c.source AS source,
+          c.batch AS batch,
+          c.updatedAt AS updatedAt,
+          coalesce(c.priority, 0) AS priority
+        """;
+        try (Session session = driver.session()) {
+            var rec = session.executeRead(tx ->
+                    tx.run(cypher, parameters(
+                            "uid", userId,
+                            "sid", subjectId,
+                            "pred", predicate.name(),
+                            "oid", objectId,
+                            "q", quantifier.name(),
+                            "pol", polarity
+                    )).single()
+            );
+            // 注意：Neo4j 返回的类型你可按你项目里已有的工具再封装一下
+            String predStr = rec.get("predicate").asString();
+            String qStr = rec.get("quantifier").asString();
+            String statusStr = rec.get("epistemicStatus").isNull() ? null : rec.get("epistemicStatus").asString();
+            EpistemicStatus status = statusStr == null ? null : EpistemicStatus.valueOf(statusStr);
+
+            return new ClaimEvidence(
+                    rec.get("subjectId").asString(),
+                    PredicateType.valueOf(predStr),
+                    rec.get("objectId").asString(),
+                    Quantifier.valueOf(qStr),
+                    rec.get("polarity").asBoolean(),
+                    status,
+                    rec.get("confidence").asDouble(),
+                    rec.get("source").isNull() ? null : Source.valueOf(rec.get("source").asString()),
+                    rec.get("batch").isNull() ? null : rec.get("batch").asString(),
+                    rec.get("updatedAt").isNull() ? null : rec.get("updatedAt").asZonedDateTime().toInstant(),
+                    rec.get("priority").asInt()
+            );
+        }
+    }
+
+    /**
+     *
+     * @param v 之前的confidence
+     * @param lo
+     * @param hi
+     * @return
+     */
+    private static double clamp(double v, double lo, double hi) {
+        return Math.max(lo, Math.min(hi, v));
+    }
+
+    public void maybeTransitionStatus(String userId, ClaimEvidence c) {
+        String current = c.epistemicStatus() == null ? "UNKNOWN" : c.epistemicStatus().name();
+        String next = deriveStatus(c);
+        if (current.equals(next)) {
+            return; // 🚫 没变化，不记录
+        }
+        writeStatusTransition(userId, c, current, next);
+    }
+
+    private void writeStatusTransition(
+            String userId,
+            ClaimEvidence c,
+            String from,
+            String to
+    ) {
+        String cypher = """
+                MATCH (u:User {id:$uid})-[:ASSERTS]->(cl:Claim {
+                  subjectId:$sid,
+                  predicate:$pred,
+                  objectId:$oid,
+                  quantifier:$q,
+                  polarity:$pol,
+                  legacy:false
+                })
+                SET cl.epistemicStatus = $to,
+                    cl.updatedAt = datetime()
+            
+                MERGE (fromS:EpistemicStatus {name:$from})
+                MERGE (toS:EpistemicStatus {name:$to})
+            
+                CREATE (t:StatusTransition {
+                  id: randomUUID(),
+                  at: datetime(),
+                  reason: 'threshold-derived',
+                  from: $from,
+                  to: $to,
+                  confidence: cl.confidence,
+                  supportCount: cl.supportCount
+                })
+            
+                MERGE (cl)-[:HAS_TRANSITION]->(t)
+                MERGE (t)-[:FROM]->(fromS)
+                MERGE (t)-[:TO]->(toS)
+            
+                WITH cl, toS
+                OPTIONAL MATCH (cl)-[old:CURRENT_STATUS]->(:EpistemicStatus)
+                DELETE old
+                MERGE (cl)-[:CURRENT_STATUS]->(toS)
+                """;
 
         try (Session session = driver.session()) {
-            session.executeWrite(tx -> {
-                tx.run(
-                        cypher,
-                        Map.of(
-                                "uid", userId,
-
-                                "sk", supportedKey,
-                                "delta", delta,
-
-                                "ek", evidenceKey,
-                                "es", evidenceSource,
-
-                                "reason", reason
-                        )
-                );
-                return null;
-            });
+            session.executeWrite(tx -> tx.run(cypher, parameters(
+                    "uid", userId,
+                    "sid", c.subjectId(),
+                    "pred", c.predicate().name(),
+                    "oid", c.objectId(),
+                    "q", c.quantifier().name(),
+                    "pol", c.polarity(),
+                    "from", from,
+                    "to", to
+            )).consume());
         }
-
-        log.debug(
-                "[TRACE][SUPPORT] userId={}, supported={}, delta={}, evidence={}, reason={}",
-                userId,
-                supportedKey,
-                delta,
-                evidenceKey,
-                reason
-        );
     }
 
 
-    private void handleOppose(String userId, Citation dominant, ExtractedRelation newExtractedRelation) {
+    private String deriveStatus(ClaimEvidence c) {
+        double conf = c.confidence();
+        if (conf <= 0.15) {
+            return "DENIED";
+        }
+        if (conf >= 0.85) {
+            return "CONFIRMED";
+        }
+        if (conf >= 0.4) {
+            return "WEAKLY_SUPPORTED";
+        }
+        return "UNKNOWN";
+    }
+
+
+    private void handleOppose(String userId,
+                              Citation dominant,
+                              ExtractedRelation newExtractedRelation) {
         // A. 构造 opposite relation
         ExtractedRelation opposite = buildOppositeRelation(dominant);
-
         // B. 确保 opposite claim 存在
         ensureClaimSlotExists(userId, opposite);
-
         // C. 计算本次博弈的 delta
         OpposeDelta delta = computeOpposeDelta(dominant, opposite);
-
         // D. 执行双向更新（A↓ B↑）
-        applyOpposeDelta(userId, dominant, opposite, delta);
-
+        List<ClaimDelta> claimDeltas = applyOpposeDelta(userId, dominant, opposite, delta);
         // E. 记录演化日志 / 事件
-        logOpposeTrace(userId, dominant, opposite, delta,"user statement contradicts previous claim");
+       // logOpposeTrace(userId, dominant, opposite, delta,"oppose");
+        ClaimDelta dominanDelta = claimDeltas.get(0);
+        ClaimEvidence evidence = JSONObject.parseObject(dominanDelta.claimKey(), ClaimEvidence.class);
+        maybeTransitionStatus(userId,evidence);
+
+        EpistemicEvent epistemicEvent = new OpposeEvent(
+                UUID.randomUUID().toString(),
+                userId,
+                Instant.now(),
+                buildCitationKey(newExtractedRelation),   // triggerKey
+                "oppose",
+
+                buildCitationKey(dominant),
+                delta.dominantDelta(),            // ✅ delta 本身
+
+                buildCitationKey(opposite),
+                delta.oppositeDelta(),            // ✅ delta 本身
+
+                claimDeltas
+        );
+        persistEpistemicEvent(userId,epistemicEvent);
     }
 
+/*
     private void logOpposeTrace(
             String userId,
             Citation dominant,
@@ -266,6 +519,7 @@ public class ClaimConfidenceService {
                 reason
         );
     }
+*/
 
 
     /**
@@ -273,30 +527,82 @@ public class ClaimConfidenceService {
      * - dominant：下降
      * - opposite：上升
      */
-    private void applyOpposeDelta(String userId, Citation dominant,
-            ExtractedRelation opposite,
-            OpposeDelta delta) {
-        // ===== 1️⃣ 压制 dominant（负向 delta）=====
-        if (delta.dominantDelta() < 0) {
-            downscaleClaim(
-                    userId,
-                    ExtractedRelation.relationFromDominant(dominant),
-                    Math.abs(delta.dominantDelta())
-            );
-        }
-
-        // ===== 2️⃣ 扶持 opposite（正向 delta）=====
-        if (delta.oppositeDelta() > 0) {
-            upsertAndSupport(
-                    userId,
-                    opposite,
-                    delta.oppositeDelta()
-            );
-        }
-        log.info("[OPPOSE][APPLY] userId={}, dominantΔ={}, oppositeΔ={}",
+    private List<ClaimDelta> applyOpposeDelta(String userId,
+                                           Citation dominant,
+                                           ExtractedRelation opposite,
+                                           OpposeDelta delta) {
+        // A) dominant 先读、再写
+        ClaimEvidence domBefore = loadClaimEvidence(
                 userId,
+                dominant.subjectId(),
+                PredicateType.valueOf(dominant.predicate()),
+                dominant.objectId(),
+                Quantifier.valueOf(dominant.quantifier()),
+                dominant.polarity()
+        );
+        double domNew = clamp(domBefore.confidence() + delta.dominantDelta(), 0.0, 1.0);
+
+        // B) opposite 读、再写
+        ClaimEvidence oppBefore = loadClaimEvidence(
+                userId,
+                opposite.subjectId(),
+                opposite.predicateType(),
+                opposite.objectId(),
+                opposite.quantifier(),
+                opposite.polarity()
+        );
+        double oppNew = clamp(oppBefore.confidence() + delta.oppositeDelta(), 0.0, 1.0);
+
+        String cypher = """
+        MATCH (u:User {id:$uid})
+        MATCH (u)-[:ASSERTS]->(d:Claim {
+          subjectId:$dsid, predicate:$dpred, objectId:$doid, quantifier:$dq, polarity:$dpol
+        })
+        MATCH (u)-[:ASSERTS]->(o:Claim {
+          subjectId:$osid, predicate:$opred, objectId:$ooid, quantifier:$oq, polarity:$opol
+        })
+        SET d.confidence = $dconf, d.updatedAt = datetime(),
+            o.confidence = $oconf, o.updatedAt = datetime()
+        RETURN d.updatedAt AS updatedAt
+        """;
+        try (Session session = driver.session()) {
+                session.executeWrite(tx ->
+                    tx.run(cypher, parameters(
+                            "uid", userId,
+
+                            "dsid", dominant.subjectId(),
+                            "dpred", dominant.predicate(),
+                            "doid", dominant.objectId(),
+                            "dq", dominant.quantifier(),
+                            "dpol", dominant.polarity(),
+                            "dconf", domNew,
+
+                            "osid", opposite.subjectId(),
+                            "opred", opposite.predicateType().name(),
+                            "ooid", opposite.objectId(),
+                            "oq", opposite.quantifier().name(),
+                            "opol", opposite.polarity(),
+                            "oconf", oppNew
+                    )).single()
+            );
+        }
+        // 4. 组装 ClaimDelta（这是关键）
+        ClaimDelta d1 = new ClaimDelta(
+                buildEvidenceKey(domBefore),
+                domBefore.confidence(),   // before
+                domNew,                   // after
                 delta.dominantDelta(),
-                delta.oppositeDelta());
+                DeltaDirection.fromDelta(delta.dominantDelta())
+        );
+
+        ClaimDelta d2 = new ClaimDelta(
+                buildEvidenceKey(oppBefore),
+                oppBefore.confidence(),   // before
+                oppNew,                   // after
+                delta.oppositeDelta(),
+                DeltaDirection.fromDelta(delta.oppositeDelta())
+        );
+        return List.of(d1, d2);
     }
 
     /**
@@ -329,58 +635,11 @@ public class ClaimConfidenceService {
                 dominantConf,
                 dominantDelta,
                 oppositeDelta,
-                buildKey(opposite));
+                buildLogKey(opposite));
 
         return new OpposeDelta(dominantDelta, oppositeDelta);
     }
 
-    /**
-     * 确保 opposite claim 存在
-     * 不负责置信度提升，只负责“有这个仓库”(claim)
-     */
-    private void ensureOppositeExists(String userId, ExtractedRelation opposite) {
-        String cypher = """
-        MERGE (u:User {id:$uid})
-        MERGE (u)-[:ASSERTS]->(c:Claim {
-          subjectId:$sid,
-          predicate:$pred,
-          objectId:$oid,
-          quantifier:$q,
-          polarity:$pol,
-          legacy:$legacy
-        })
-        ON CREATE SET
-          c.confidence      = $initConf,
-          c.supportCount    = 0,
-          c.source          = $source,
-          c.batch           = $batch,
-          c.generation      = $generation,
-          c.epistemicStatus = 'HYPOTHETICAL',
-          c.createdAt       = datetime(),
-          c.updatedAt       = datetime()
-        ON MATCH SET
-          c.updatedAt = datetime()
-    """;
-
-        try (Session session = driver.session()) {
-            session.executeWrite(tx -> tx.run(
-                    cypher,
-                    parameters(
-                            "uid", userId,
-                            "sid", opposite.subjectId(),
-                            "pred", opposite.predicateType().name(),
-                            "oid", opposite.objectId(),
-                            "q", opposite.quantifier().name(),
-                            "pol", opposite.polarity(),
-                            "legacy", opposite.generation().isLegacy(),
-                            "initConf", Math.min(opposite.confidence(), 0.3),
-                            "source", opposite.source().name(),
-                            "batch", "oppose-init",
-                            "generation", opposite.generation().name()
-                    )
-            ).consume());
-        }
-    }
 
 
     /**
@@ -665,314 +924,11 @@ public class ClaimConfidenceService {
         }
     }
 
-    //当用户支持一个 Claim 时，对极性相反的 Claim进行信任衰减
-    private void downscaleClaim(String userId, ExtractedRelation r, double dec) {
-        String cypher = """
-        MATCH (u:User {id:$uid})-[:ASSERTS]->(c:Claim)
-        WHERE
-              c.subjectId=$sid
-          AND c.predicate=$pred
-          AND c.objectId=$oid
-          AND c.quantifier=$q
-          AND c.polarity <> $pol
-          AND c.legacy = false
-        SET c.confidence = CASE
-            WHEN ((coalesce(c.confidence, 0.5) * 0.995) - $dec) < 0.0 THEN 0.0
-            ELSE ((coalesce(c.confidence, 0.5) * 0.995) - $dec)
-            END,
-            c.updatedAt = datetime()
-        """;
 
-        try (Session session = driver.session()) {
-            session.executeWrite(tx -> tx.run(cypher, parameters(
-                    "uid", userId,
-                    "sid", r.subjectId(),
-                    "pred", r.predicateType().name(),
-                    "oid", r.objectId(),
-                    "q", r.quantifier().name(),
-                    "pol", r.polarity(),
-                    "dec", dec
-            )).consume());
-        }
-    }
-
-
-
-    /**
-     * 3.9.2.3 状态迁移决策点（最小闭环）：
-     * - 只作用于 legacy=false
-     * - 读当前 Claim 状态
-     * - 计算 nextStatus
-     * - 若发生变化：写入 StatusTransition + 更新 CURRENT_STATUS
-     */
-    private void maybeTransition(String userId, ExtractedRelation r, String reason) {
-        if (r == null || r.isLegacy()) return;
-
-        // 1) 读当前 claim 的状态快照（如果不存在，直接返回）
-        ClaimSnapshot cur = readClaimSnapshot(userId, r);
-        if (cur == null) return;
-
-        // 2) 计算 next status（你可以按自己规则改阈值）
-        String next = computeNextStatus(cur);
-
-        // 3) 没变化就不写（避免每次都产生 transition 垃圾）
-        String from = normalizeStatus(cur.epistemicStatus);
-        String to = normalizeStatus(next);
-        if (from.equals(to)) return;
-
-        // 4) 写入迁移：更新 claim + 记录 transition + 维护 CURRENT_STATUS
-        writeTransition(userId, r, from, to, reason, cur.confidence, cur.supportCount);
-    }
-
-    /** 读 Claim 当前快照（legacy=false + 精准 key） */
-    private ClaimSnapshot readClaimSnapshot(String userId, ExtractedRelation r) {
-        String cypher = """
-                        MATCH (u:User {id:$uid})-[:ASSERTS]->(c:Claim {
-                          subjectId:$sid,
-                          predicate:$pred,
-                          objectId:$oid,
-                          quantifier:$q,
-                          polarity:$pol,
-                          legacy:false
-                        })
-                        OPTIONAL MATCH (c)-[:CURRENT_STATUS]->(cs:EpistemicStatus)
-                        RETURN
-                          coalesce(c.epistemicStatus,'UNKNOWN') AS epistemicStatus,
-                          coalesce(cs.name,'UNKNOWN') AS currentStatus,
-                          coalesce(c.confidence, 0.5) AS confidence,
-                          coalesce(c.supportCount, 0) AS supportCount
-                        LIMIT 1
-                        """;
-
-        try (Session session = driver.session()) {
-            return session.executeRead(tx -> {
-                var res = tx.run(cypher, parameters(
-                        "uid", userId,
-                        "sid", r.subjectId(),
-                        "pred", r.predicateType().name(),
-                        "oid", r.objectId(),
-                        "q", r.quantifier().name(),
-                        "pol", r.polarity()
-                ));
-                if (!res.hasNext()) return null;
-                var rec = res.next();
-                return new ClaimSnapshot(
-                        rec.get("epistemicStatus").asString(),
-                        rec.get("currentStatus").asString(),
-                        rec.get("confidence").asDouble(),
-                        rec.get("supportCount").asInt()
-                );
-            });
-        }
-    }
-
-    /**
-     * 计算 nextStatus（最小规则）
-     *
-     * 你可以改成你自己的状态机：
-     * - UNKNOWN / HYPOTHETICAL / CONFIRMED / DENIED / DISPUTED
-     *
-     * 这里给一个可用的“阈值版”：
-     * - supportCount >= 2 且 confidence >= 0.85 -> CONFIRMED
-     * - confidence <= 0.20 -> DISPUTED
-     * - 其他 -> HYPOTHETICAL
-     *
-     * 注意：当前 status 的定义里，polarity=true/false 已经把方向编码进 claim 了，
-     * 所以 epistemicStatus 可以只描述“可信度阶段”，不用再区分正/反。
-     */
-    private String computeNextStatus(ClaimSnapshot cur) {
-        double conf = cur.confidence;
-        int sc = cur.supportCount;
-
-        if (sc >= 2 && conf >= 0.85) return "CONFIRMED";
-        if (conf <= 0.20) return "DISPUTED";
-        // 如果你更喜欢 UNKNOWN 起步，也可以：sc==0 -> UNKNOWN
-        return "HYPOTHETICAL";
-    }
-
-    /** 写入迁移记录 + CURRENT_STATUS */
-    private void writeTransition(
-            String userId,
-            ExtractedRelation r,
-            String from,
-            String to,
-            String reason,
-            double confidence,
-            int supportCount) {
-        String cypher = """
-                MATCH (u:User {id:$uid})-[:ASSERTS]->(c:Claim {
-                  subjectId:$sid,
-                  predicate:$pred,
-                  objectId:$oid,
-                  quantifier:$q,
-                  polarity:$pol,
-                  legacy:false
-                })
-                WITH c, $from AS from, $to AS to
-                // 更新 claim 的当前状态字段
-                SET c.epistemicStatus = to,
-                    c.updatedAt = datetime()
-                // 状态节点
-                MERGE (fromS:EpistemicStatus {name: from})
-                MERGE (toS:EpistemicStatus   {name: to})
-                // 迁移事件节点
-                CREATE (t:StatusTransition {
-                  id: randomUUID(),
-                  at: datetime(),
-                  reason: $reason,
-                  from: from,
-                  to: to,
-                  confidence: $confidence,
-                  supportCount: $supportCount
-                })
-                MERGE (c)-[:HAS_TRANSITION]->(t)
-                MERGE (t)-[:FROM]->(fromS)
-                MERGE (t)-[:TO]->(toS)
-                // CURRENT_STATUS 只保留一条
-                WITH c, toS
-                OPTIONAL MATCH (c)-[old:CURRENT_STATUS]->(:EpistemicStatus)
-                DELETE old
-                MERGE (c)-[:CURRENT_STATUS]->(toS)
-                """;
-
-        try (Session session = driver.session()) {
-            session.executeWrite(tx -> tx.run(cypher, parameters(
-                    "uid", userId,
-                    "sid", r.subjectId(),
-                    "pred", r.predicateType().name(),
-                    "oid", r.objectId(),
-                    "q", r.quantifier().name(),
-                    "pol", r.polarity(),
-                    "from", from,
-                    "to", to,
-                    "reason", reason,
-                    "confidence", confidence,
-                    "supportCount", supportCount
-            )).consume());
-        }
-    }
-
-    /** 统一空值/非法值 */
-    private String normalizeStatus(String s) {
-        if (s == null || s.isBlank()) return "UNKNOWN";
-        return s.trim();
-    }
-
-    /** 最小快照结构 */
-    private static class ClaimSnapshot {
-        final String epistemicStatus;
-        final String currentStatus;
-        final double confidence;
-        final int supportCount;
-
-        ClaimSnapshot(String epistemicStatus, String currentStatus, double confidence, int supportCount) {
-            this.epistemicStatus = epistemicStatus;
-            this.currentStatus = currentStatus;
-            this.confidence = confidence;
-            this.supportCount = supportCount;
-        }
-    }
-
-    // 你可以在 ClaimConfidenceService 里加一个内部 key record
-    private record ClaimKey(String subjectId, String predicate, String objectId, String quantifier, boolean polarity) {}
-
-
-    private void maybeTransitionStatus(String userId, ExtractedRelation r, String reason) {
-        ClaimKey key = new ClaimKey(
-                r.subjectId(),
-                r.predicateType().name(),
-                r.objectId(),
-                r.quantifier().name(),
-                r.polarity()
-        );
-        maybeTransitionStatus(userId, key, reason);
-    }
-
-
-    private void maybeTransitionStatus(String userId, ClaimKey key, String reason) {
-        String readCypher = """
-        MATCH (u:User {id:$uid})-[:ASSERTS]->(c:Claim {
-          subjectId:$sid, predicate:$pred, objectId:$oid,
-          quantifier:$q, polarity:$pol, legacy:false
-        })
-        RETURN
-          coalesce(c.epistemicStatus,'UNKNOWN') AS st,
-          coalesce(c.confidence,0.5)          AS conf,
-          coalesce(c.supportCount,0)          AS sc,
-          c.polarity                          AS pol
-        """;
-        String writeCypher = """
-        MATCH (u:User {id:$uid})-[:ASSERTS]->(c:Claim {
-          subjectId:$sid, predicate:$pred, objectId:$oid,
-          quantifier:$q, polarity:$pol, legacy:false
-        })
-        WITH c, coalesce(c.epistemicStatus,'UNKNOWN') AS from
-        SET c.epistemicStatus = $to,
-            c.updatedAt = datetime()
-        WITH c, from
-        MERGE (fromS:EpistemicStatus {name: from})
-        MERGE (toS:EpistemicStatus   {name: $to})
-        CREATE (t:StatusTransition {
-          id: randomUUID(),
-          at: datetime(),
-          reason: $reason,
-          from: from,
-          to: $to,
-          confidence: c.confidence,
-          supportCount: c.supportCount
-        })
-        MERGE (c)-[:HAS_TRANSITION]->(t)
-        MERGE (t)-[:FROM]->(fromS)
-        MERGE (t)-[:TO]->(toS)
-        WITH c, toS
-        OPTIONAL MATCH (c)-[old:CURRENT_STATUS]->(:EpistemicStatus)
-        FOREACH (_ IN CASE WHEN old IS NULL THEN [] ELSE [1] END | DELETE old)
-        MERGE (c)-[:CURRENT_STATUS]->(toS)
-        """;
-
-        try (Session session = driver.session()) {
-            session.executeWrite(tx -> {
-                var params = parameters(
-                        "uid", userId,
-                        "sid", key.subjectId(),
-                        "pred", key.predicate(),
-                        "oid", key.objectId(),
-                        "q", key.quantifier(),
-                        "pol", key.polarity()
-                );
-
-                var rec = tx.run(readCypher, params).single();
-
-                EpistemicStatus from = EpistemicStatus.valueOf(rec.get("st").asString());
-                double conf = rec.get("conf").asDouble();
-                long sc = rec.get("sc").asLong();
-                boolean pol = rec.get("pol").asBoolean();
-
-                EpistemicStatus to = stateMachine.nextGraph(from, pol, conf, sc);
-                if (to == from) return null;
-
-                tx.run(writeCypher, parameters(
-                        "uid", userId,
-                        "sid", key.subjectId(),
-                        "pred", key.predicate(),
-                        "oid", key.objectId(),
-                        "q", key.quantifier(),
-                        "pol", key.polarity(),
-                        "to", to.name(),
-                        "reason", reason == null ? "threshold_crossed" : reason
-                )).consume();
-                return null;
-            });
-        }
-    }
-
-    private String buildKey(ExtractedRelation r) {
+    private String buildLogKey(ExtractedRelation r) {
         return JSON.toJSONString(r);
     }
 
-    private String buildKey2(Citation citation) {
-        return JSON.toJSONString(citation);
-    }
 
     private String buildCitationKey(Citation c) {
         return String.join("|",
@@ -983,6 +939,25 @@ public class ClaimConfidenceService {
                 String.valueOf(c.polarity())
         );
     }
+    private String buildCitationKey(ExtractedRelation e) {
+        return String.join("|",
+                e.subjectId(),
+                e.predicateType().name(),
+                e.objectId(),
+                e.quantifier().name(),
+                String.valueOf(e.polarity())
+        );
+    }
 
-
+    //ClaimEvidence e
+    //String s, PredicateType predicate, String s1, Quantifier quantifier, boolean polarity
+    private String buildEvidenceKey(ClaimEvidence e) {
+        return String.join("|",
+                e.subjectId(),
+                e.predicate().name(),
+                e.objectId(),
+                e.quantifier().name(),
+                String.valueOf(e.polarity())
+        );
+    }
 }

@@ -1,7 +1,7 @@
 package com.yef.agent.memory.event;
 
-import com.yef.agent.memory.ClaimDelta;
 
+import com.yef.agent.memory.ClaimDelta;
 import java.time.Instant;
 import java.util.List;
 
@@ -20,7 +20,7 @@ public interface EpistemicEvent {
     //人类可读原因
     String reason();
     //触发本次事件的证据
-    String evidenceKey();
+    String triggerKey();
     //对哪些 Claim 产生了什么影响
     List<ClaimDelta> deltas();
 }
