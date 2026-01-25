@@ -68,19 +68,11 @@ public class ClaimConfidenceService {
         // 1) ⭐关键新增：确保本次 polarity 的 claim 存在
         ensureClaimSlotExists(userId, newExtractedRelation);
 
-        // 2. find conflicting claims (NO minConf!)
-        List<ClaimEvidence> related = queryClaimsForEvolution(userId, r);
+        //List<ClaimEvidence> related = queryClaimsForEvolution(userId, r);
 
-        // 3. update confidence & maybeTransition
-        evolveClaims(userId, result, newExtractedRelation);
+        //认知博弈过程，也即为认知演化过程
+        dispatchEpistemicEvent(userId, result, newExtractedRelation);
 
-        // 3.9.2.3 决策点：可能触发 epistemicStatus 状态迁移
-        //maybeTransition(userId, r, "answer_loop");
-       /* if (nextStatus == EpistemicStatus.CONFIRMED) {
-            reconcileOppositeClaims(userId, r, claimId);
-        }*/
-        // 4) 把 Answer 证据链挂上（如果你已经写 Answer 节点了）
-        // linkAnswerSupportsClaim(...)
     }
 
 
@@ -93,7 +85,7 @@ public class ClaimConfidenceService {
      * @param newExtractedRelation 根据当前msg抽取得到的 ExtractedRelation
      */
     // 第一版：只处理 SUPPORT / OPPOSE / NEUTRAL
-    private void evolveClaims(String userId, AnswerResult result,
+    private void dispatchEpistemicEvent(String userId, AnswerResult result,
                               ExtractedRelation newExtractedRelation) {
 
         // 1) 没有裁决证据，没法演化（安全保护）
