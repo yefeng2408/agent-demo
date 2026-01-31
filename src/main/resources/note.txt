@@ -1,0 +1,19 @@
+AnswerResult
+   │
+   ▼
+EpistemicContext
+   │
+   ▼
+EpistemicDeltaPipeline
+   │
+   ├─▶ SupportDeltaStrategy
+   │      └─ produce ClaimDelta(s)
+   │
+   ├─▶ OpposeDeltaStrategy
+   │      └─ produce ClaimDelta(s)
+   │
+   ├─▶ StatusTransitionStage
+   │      └─ maybeTransitionStatus(claim)
+   │
+   └─▶ EpistemicEventPersistenceStage
+          └─ persist SupportEvent / OpposeEvent

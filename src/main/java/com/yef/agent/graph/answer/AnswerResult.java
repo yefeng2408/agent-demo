@@ -1,6 +1,7 @@
 package com.yef.agent.graph.answer;
 
 import com.yef.agent.graph.ExtractedRelation;
+import com.yef.agent.memory.explain.ExplanationItem;
 import java.util.List;
 
 public record AnswerResult(
@@ -8,7 +9,7 @@ public record AnswerResult(
         String answer,
         ExtractedRelation relation,     // ✅ 决策（唯一）
         List<Citation> citations,       // ✅ 证据（多条）
-        List<String> followUpQuestions  // 可选
+        List<ExplanationItem> explanations  // 可选
 ) {
 
     public static AnswerResult unanswered() {
@@ -19,8 +20,8 @@ public record AnswerResult(
             String answer,
             ExtractedRelation relation,
             List<Citation> citations,
-            List<String> followUpQuestions) {
-        return new AnswerResult(true, answer, relation, citations, followUpQuestions);
+            List<ExplanationItem> explanations) {
+        return new AnswerResult(true, answer, relation, citations, explanations);
     }
     
 }

@@ -12,8 +12,7 @@ public class ConfidenceUpdater {
             double current,
             EpistemicStatus from,
             EpistemicStatus to,
-            double evidenceScore
-    ) {
+            double evidenceScore) {
         if (from == CONFIRMED && to == DENIED) {
             return Math.max(current - evidenceScore * 0.3, 0.1);
         }

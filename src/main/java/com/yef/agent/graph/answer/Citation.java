@@ -14,6 +14,27 @@ public record Citation(
         Instant updatedAt
 ) {
 
+
+    public Citation toCitation(ClaimEvidence claimEvidence){
+        return null;
+    }
+
+
+    public static Citation from(ClaimEvidence evidence) {
+        return new Citation(
+                evidence.predicate().name(),
+                evidence.subjectId(),
+                evidence.objectId(),
+                evidence.quantifier().name(),
+                evidence.polarity(),
+                evidence.confidence(),
+                evidence.source().name(),
+                evidence.batch(),
+                evidence.updatedAt()
+                );
+    }
+
+
     public String toExplainText() {
         return String.format(
                 "- [%s] %s %s %s（置信度 %.2f，来源 %s，时间 %s）",
@@ -26,5 +47,7 @@ public record Citation(
                 updatedAt == null ? "未知" : updatedAt
         );
     }
+    
+    
 
 }

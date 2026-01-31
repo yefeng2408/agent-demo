@@ -3,15 +3,12 @@ package com.yef.agent.memory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
-import org.springframework.transaction.annotation.Transactional;
-
 import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.stream.Collectors;
 
-
+//@Deprecated(forRemoval = true)
 @Repository
 public class BeliefStore {
 

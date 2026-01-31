@@ -7,7 +7,6 @@ import io.milvus.param.R;
 import io.milvus.param.dml.InsertParam;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.embedding.EmbeddingModel;
-import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import java.util.*;
@@ -22,7 +21,6 @@ public class UserPersonaAdvisor {
     private final BeliefStore beliefStore;
     private final EpistemicStateMachine stateMachine;
     private final ConfidenceUpdater confidenceUpdater;
-    //private final VectorStore milvusVectorStore;
     private final MilvusServiceClient  milvusServiceClient;
     private final JdbcTemplate jdbcTemplate;
     public UserPersonaAdvisor(
@@ -31,7 +29,6 @@ public class UserPersonaAdvisor {
             BeliefStore beliefStore,
             EpistemicStateMachine stateMachine,
             ConfidenceUpdater confidenceUpdater,
-            VectorStore vectorStore,
             MilvusServiceClient milvusServiceClient,
             JdbcTemplate jdbcTemplate
     ) {
@@ -40,7 +37,6 @@ public class UserPersonaAdvisor {
         this.beliefStore = beliefStore;
         this.stateMachine = stateMachine;
         this.confidenceUpdater = confidenceUpdater;
-        //this.milvusVectorStore = vectorStore;
         this.milvusServiceClient = milvusServiceClient;
         this.jdbcTemplate = jdbcTemplate;
     }

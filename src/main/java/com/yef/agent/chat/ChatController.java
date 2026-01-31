@@ -2,11 +2,9 @@ package com.yef.agent.chat;
 
 import com.yef.agent.advisor.PersonaMemoryAdvisor;
 import com.yef.agent.advisor.UserPersonaAdvisor;
-//import com.yef.agent.graph.GraphReasoningContextBuilder;
 import com.yef.agent.graph.ExtractedRelation;
 import com.yef.agent.graph.answer.AnswerResult;
 import com.yef.agent.graph.answer.Neo4jGraphAnswerer;
-import com.yef.agent.graph.eum.ClaimGeneration;
 import com.yef.agent.graph.eum.PredicateType;
 import com.yef.agent.graph.eum.Quantifier;
 import com.yef.agent.graph.llm.LlmPolisher;
@@ -31,7 +29,6 @@ public class ChatController {
     private final PersonaMemoryAdvisor personaMemoryAdvisor;
     private final UserPersonaAdvisor userPersonaAdvisor;
     private final Neo4jGraphAnswerer graphAnswerer;
-   // private final Neo4jGraphWriter graphWriter;
     private final LlmPolisher llmPolisher;
     private final Neo4jGraphWriter neo4jGraphWriter;
     private final ClaimConfidenceService claimConfidenceService;
