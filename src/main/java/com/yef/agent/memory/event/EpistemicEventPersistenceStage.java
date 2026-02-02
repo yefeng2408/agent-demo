@@ -1,6 +1,5 @@
-package com.yef.agent.memory.factory;
+package com.yef.agent.memory.event;
 
-import com.yef.agent.memory.event.EpistemicEvent;
 import org.neo4j.driver.Driver;
 import org.neo4j.driver.Session;
 import org.springframework.stereotype.Component;

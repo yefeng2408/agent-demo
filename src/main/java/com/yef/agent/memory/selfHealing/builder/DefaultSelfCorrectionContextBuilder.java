@@ -1,18 +1,25 @@
-/*
-package com.yef.agent.memory.selfHealing;
+package com.yef.agent.memory.selfHealing.builder;
 
+import com.yef.agent.component.KeyCodec;
 import com.yef.agent.graph.answer.ClaimEvidence;
-import com.yef.agent.memory.BeliefStore;
 import com.yef.agent.memory.event.EpistemicEvent;
-import org.springframework.beans.factory.annotation.Autowired;
+import com.yef.agent.memory.selfHealing.SelfCorrectionContext;
+import com.yef.agent.memory.selfHealing.repository.ClaimRepository;
 import org.springframework.stereotype.Component;
 import java.util.List;
+import java.util.Optional;
 
 @Component
 public class DefaultSelfCorrectionContextBuilder implements SelfCorrectionContextBuilder {
 
-    @Autowired
-    private BeliefStore beliefStore;
+   private final ClaimRepository claimRepository;
+   private final KeyCodec keyCodec;
+
+
+    public DefaultSelfCorrectionContextBuilder(ClaimRepository claimRepository, KeyCodec keyCodec) {
+        this.claimRepository = claimRepository;
+        this.keyCodec = keyCodec;
+    }
 
     @Override
     public SelfCorrectionContext from(EpistemicEvent event) {
@@ -33,28 +40,24 @@ public class DefaultSelfCorrectionContextBuilder implements SelfCorrectionContex
 
 
     private ClaimEvidence resolveNewClaim(EpistemicEvent event) {
+        KeyCodec.DecodedKey key = keyCodec.decode(event.triggerKey());
+        Optional<ClaimEvidence> byKey = claimRepository.findByKey(key);
 
-        String key = event.triggerKey();
-
-        ClaimEvidence claim = beliefStore.getByKey(key);
-
-        if (claim == null) {
+        if (byKey == null) {
             throw new IllegalStateException(
                     "SelfCorrection failed: trigger claim not found: " + key
             );
         }
-
-        return claim;
+        return byKey.get();
     }
 
     private List<ClaimEvidence> findConflictedClaims(
             String userId,
-            ClaimEvidence newClaim
-    ) {
-        return beliefStore.findByPattern(
+            ClaimEvidence newClaim) {
+        return claimRepository.findBySlot(
                 userId,
                 newClaim.subjectId(),
-                newClaim.predicate(),
+                newClaim.predicate().name(),
                 newClaim.objectId(),
                 newClaim.quantifier(),
                 !newClaim.polarity()   // polarity 翻转
@@ -62,4 +65,3 @@ public class DefaultSelfCorrectionContextBuilder implements SelfCorrectionContex
     }
 
 }
-*/

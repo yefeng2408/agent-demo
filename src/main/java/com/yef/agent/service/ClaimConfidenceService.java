@@ -26,14 +26,11 @@ public class ClaimConfidenceService {
 
     private final Driver driver;
     private final EpistemicDeltaPipeline epistemicDeltaPipeline;
-    private final SelfCorrectionResolver selfCorrectionResolver;
 
     public ClaimConfidenceService(Driver driver,
-                                  EpistemicDeltaPipeline epistemicDeltaPipeline,
-                                  SelfCorrectionResolver selfCorrectionResolver) {
+                                  EpistemicDeltaPipeline epistemicDeltaPipeline) {
         this.driver = driver;
         this.epistemicDeltaPipeline = epistemicDeltaPipeline;
-        this.selfCorrectionResolver = selfCorrectionResolver;
     }
 
 
@@ -53,7 +50,11 @@ public class ClaimConfidenceService {
             ensureClaimSlotExists(userId, opposite);
         }
 
-        EpistemicContext ctx = EpistemicContext.fromAnswer(userId, result, newExtractedRelation);
+        EpistemicContext ctx = EpistemicContext.fromAnswer(userId,
+                result,
+                newExtractedRelation,
+                rel
+        );
 
         epistemicDeltaPipeline.execute(ctx);
 

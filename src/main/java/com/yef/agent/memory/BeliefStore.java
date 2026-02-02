@@ -8,7 +8,7 @@ import java.sql.ResultSet;
 import java.time.LocalDateTime;
 import java.util.*;
 
-//@Deprecated(forRemoval = true)
+@Deprecated(forRemoval = true)
 @Repository
 public class BeliefStore {
 

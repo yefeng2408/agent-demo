@@ -1,7 +1,7 @@
 package com.yef.agent.graph.eum;
 
 /**
- * 语义关系断言
+ * 语义判断层（认知判断）
  */
 public enum SemanticRelation {
 

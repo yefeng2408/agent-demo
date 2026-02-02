@@ -1,4 +1,4 @@
-package com.yef.agent.memory.selfHealing;
+package com.yef.agent.memory.selfHealing.eum;
 
 /**
  * ClaimRelationType 表示两个 Claim 之间的「认知因果关系」。

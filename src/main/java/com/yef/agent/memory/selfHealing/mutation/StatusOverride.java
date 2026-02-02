@@ -1,4 +1,4 @@
-package com.yef.agent.memory.selfHealing;
+package com.yef.agent.memory.selfHealing.mutation;
 
 import com.yef.agent.memory.EpistemicStatus;
 

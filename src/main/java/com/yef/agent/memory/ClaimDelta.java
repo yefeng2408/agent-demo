@@ -1,7 +1,7 @@
 package com.yef.agent.memory;
 
 /**
- * 变化描述: 这个事件让 claimKey 的 confidence += delta，唯一允许直接修改 confidence 的表达
+ * 变化过程: 这个事件让 claimKey 的 confidence += delta，唯一允许直接修改 confidence 的表达
  * @param claimKey
  * @param delta
  */

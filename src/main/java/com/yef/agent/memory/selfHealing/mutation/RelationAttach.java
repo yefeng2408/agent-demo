@@ -1,4 +1,6 @@
-package com.yef.agent.memory.selfHealing;
+package com.yef.agent.memory.selfHealing.mutation;
+
+import com.yef.agent.memory.selfHealing.eum.ClaimRelationType;
 
 /**
  * 把 claim 之间的关系写进图

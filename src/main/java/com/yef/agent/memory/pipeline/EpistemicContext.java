@@ -3,9 +3,11 @@ package com.yef.agent.memory.pipeline;
 import com.yef.agent.graph.ExtractedRelation;
 import com.yef.agent.graph.answer.AnswerResult;
 import com.yef.agent.graph.answer.Citation;
+import com.yef.agent.graph.eum.SemanticRelation;
+import com.yef.agent.memory.event.EpistemicEventType;
 
 /**
- * 上下文，类似于netty的ChannelHandlerContext；Pipeline是结构，Context是数据
+ * 上下文
  * EpistemicContext 同时承载了：
  * 	1.	输入事实（extracted）
  * 	2.	既有信念（dominant）
@@ -20,24 +22,18 @@ public record EpistemicContext(
 
         String userId,
 
-        // 当前图中被挑战的主张（已有 claim）
+        // 被挑战的既有主张
         Citation dominant,
 
-        // 用户刚刚说的话。语义：本轮输入中，从自然语言抽取出的“原始立场”。relation（trigger）
-        /** 本次输入形成的“挑战立场” */
+        // 本轮新输入抽取出的 relation
         ExtractedRelation extracted,
 
-        // 若是 OPPOSE，这里是 polarity 相反的 relation
-        // 若是 SUPPORT / NEUTRAL，可以为 null
-        /** 为博弈准备的对立 claim（polarity 翻转） */
+        // canonical 的对立 relation（仅在 OPPOSE 时存在）
+        ExtractedRelation opposite,
 
-        /**
-         *  A canonical counterfactual relation constructed for epistemic conflict.
-         *  This represents the structural opposite of the dominant claim,
-         *  independent of how the user phrased the input.
-         */
-        //this object is from method of ExtractedRelation.getOppositeExtract(dominant)
-        ExtractedRelation opposite
+        // ✅ 新增：语义关系判断结果
+        SemanticRelation semanticRelation
+
 ) {
 
     public static EpistemicContext fromAnswer(
@@ -45,7 +41,10 @@ public record EpistemicContext(
             //历史主张（被挑战者）
             AnswerResult answer,
             //当前新主张（挑战者）
-            ExtractedRelation extracted) {
+            ExtractedRelation extracted,
+
+            SemanticRelation semanticRelation
+            ) {
 
         Citation dominant = answer.citations().get(0);
 
@@ -58,7 +57,8 @@ public record EpistemicContext(
                 userId,
                 dominant,  // was challenged
                 extracted, // challenger
-                opposite
+                opposite,
+                semanticRelation
         );
     }
 

@@ -1,4 +1,4 @@
-package com.yef.agent.memory.selfHealing;
+package com.yef.agent.memory.selfHealing.mutation;
 
 /**
  * 调整置信度（不是暴力跳变）

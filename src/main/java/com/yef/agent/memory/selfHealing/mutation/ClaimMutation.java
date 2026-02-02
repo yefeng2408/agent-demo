@@ -1,4 +1,4 @@
-package com.yef.agent.memory.selfHealing;
+package com.yef.agent.memory.selfHealing.mutation;
 
 /**
  * 认知变更原语

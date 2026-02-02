@@ -1,73 +1,80 @@
 package com.yef.agent.memory.pipeline;
 
-import com.yef.agent.component.KeyCodec;
-import com.yef.agent.graph.ExtractedRelation;
-import com.yef.agent.graph.answer.ClaimEvidence;
 import com.yef.agent.memory.ClaimDelta;
 import com.yef.agent.memory.event.EpistemicEvent;
-import com.yef.agent.memory.factory.EpistemicEventFactory;
-import com.yef.agent.memory.factory.EpistemicEventPersistenceStage;
+import com.yef.agent.memory.event.factory.EpistemicEventFactory;
+import com.yef.agent.memory.event.EpistemicEventPersistenceStage;
+import com.yef.agent.memory.pipeline.eventRouter.EpistemicEventRouter;
 import com.yef.agent.memory.pipeline.strategy.DeltaStrategy;
 import com.yef.agent.memory.pipeline.strategy.StatusTransitionStage;
-import com.yef.agent.memory.selfHealing.ClaimSlotQuery;
-import com.yef.agent.memory.selfHealing.SelfCorrectionResolver;
-import com.yef.agent.memory.selfHealing.SelfCorrectionResult;
 import com.yef.agent.memory.selfHealing.async.HandleEpistemicEventAsyncTask;
+import jakarta.annotation.PostConstruct;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
 import java.util.List;
 
-
-
+@Slf4j
 @Component
 public class DefaultEpistemicDeltaPipeline implements EpistemicDeltaPipeline {
 
+    @Autowired
+    ApplicationContext ctx;
+
     private final List<DeltaStrategy> strategies;
     private final StatusTransitionStage statusStage;
-    private final EpistemicEventFactory eventFactory;
     private final EpistemicEventPersistenceStage persistenceStage;
-    private final SelfCorrectionResolver selfCorrectionResolver;
     private final HandleEpistemicEventAsyncTask handleEpistemicEventAsyncTask;
-    private final ClaimSlotQuery claimSlotQuery;
-    private final KeyCodec keyCodec;
-
+    private final EpistemicEventRouter eventRouter;
 
     public DefaultEpistemicDeltaPipeline(List<DeltaStrategy> strategies,
                                          StatusTransitionStage statusStage,
-                                         EpistemicEventFactory eventFactory,
                                          EpistemicEventPersistenceStage persistenceStage,
-                                         SelfCorrectionResolver selfCorrectionResolver,
                                          HandleEpistemicEventAsyncTask handleEpistemicEventAsyncTask,
-                                         ClaimSlotQuery claimSlotQuery,
-                                         KeyCodec keyCodec
+                                         EpistemicEventRouter eventRouter
     ) {
         this.strategies = strategies;
         this.statusStage = statusStage;
-        this.eventFactory = eventFactory;
         this.persistenceStage = persistenceStage;
-        this.selfCorrectionResolver = selfCorrectionResolver;
         this.handleEpistemicEventAsyncTask = handleEpistemicEventAsyncTask;
-        this.claimSlotQuery = claimSlotQuery;
-        this.keyCodec = keyCodec;
+        this.eventRouter = eventRouter;
+    }
+
+    @PostConstruct
+    void check() {
+        log.info("------> Factories in context: {}", ctx.getBeansOfType(EpistemicEventFactory.class));
     }
 
     @Override
     public EpistemicEvent execute(EpistemicContext ctx) {
+        // 1. 选择 delta 策略
         DeltaStrategy strategy = strategies.stream()
                 .filter(s -> s.supports(ctx))
                 .findFirst()
                 .orElseThrow();
+
+        // 2. 计算 delta
         List<ClaimDelta> deltas = strategy.apply(ctx);
 
+        // 3. 状态迁移
         statusStage.apply(ctx.userId(), deltas);
 
-        EpistemicEvent event = eventFactory.build(ctx, deltas);
+        // 4. 路由事件工厂（不再关心 SUPPORT / OPPOSE）
+        EpistemicEventFactory factory = eventRouter.route(ctx);
 
+        // 5. 构建事件
+        EpistemicEvent event = factory.build(ctx, deltas);
+
+        // 6. 持久化
         persistenceStage.persist(ctx.userId(), event);
 
-        // 不做任何 self-healing 逻辑判断
+        // 7. 异步 self-healing
         handleEpistemicEventAsyncTask.handle(ctx.userId(), event);
+
         return event;
     }
+
 
 
 }

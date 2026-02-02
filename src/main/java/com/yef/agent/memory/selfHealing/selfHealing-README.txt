@@ -1,7 +1,5 @@
 🧠 Self-Healing（自我修复子系统）
 
-🧠 Self-Healing（自我修复子系统）
-
 Self-Healing 是 Agent 认知系统中的“后台演化引擎”
 它不负责当下裁决，而负责让认知系统 在冲突中保持可解释、可演化、可回放。
 

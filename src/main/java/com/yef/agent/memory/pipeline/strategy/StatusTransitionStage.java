@@ -1,35 +1,28 @@
 package com.yef.agent.memory.pipeline.strategy;
 
-import com.alibaba.fastjson.JSON;
 import com.yef.agent.component.ClaimEvidenceRepository;
-import com.yef.agent.component.KeyCodec;
 import com.yef.agent.graph.answer.ClaimEvidence;
 import com.yef.agent.memory.ClaimDelta;
 import com.yef.agent.memory.EpistemicStatus;
-import com.yef.agent.memory.PredicateKey;
 import com.yef.agent.memory.SupportLevel;
 import org.neo4j.driver.Driver;
 import org.neo4j.driver.Session;
 import org.springframework.stereotype.Component;
 import java.util.List;
-
-import static com.yef.agent.memory.EpistemicStatus.CONFIRMED;
-import static com.yef.agent.memory.EpistemicStatus.HYPOTHETICAL;
-import static com.yef.agent.memory.SupportLevel.WEAK;
 import static org.neo4j.driver.Values.parameters;
 
+/**
+ * 状态迁移
+ */
 @Component
 public class StatusTransitionStage {
 
     private final Driver driver;
     private final ClaimEvidenceRepository claimEvidenceRepository;
-    private final KeyCodec keyCodec;
 
     public StatusTransitionStage(Driver driver,
-                                 KeyCodec keyCodec,
                                  ClaimEvidenceRepository claimEvidenceRepository) {
         this.driver = driver;
-        this.keyCodec = keyCodec;
         this.claimEvidenceRepository = claimEvidenceRepository;
     }
 
@@ -71,8 +64,7 @@ public class StatusTransitionStage {
             String userId,
             ClaimEvidence c,
             String from,
-            String to
-    ) {
+            String to) {
         String cypher = """
                 MATCH (u:User {id:$uid})-[:ASSERTS]->(cl:Claim {
                   subjectId:$sid,
