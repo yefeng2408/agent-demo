@@ -10,9 +10,7 @@ import org.neo4j.driver.Driver;
 import org.neo4j.driver.Session;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
-
 import java.util.List;
-
 import static org.neo4j.driver.Values.parameters;
 
 /**
@@ -127,7 +125,41 @@ public class HandleEpistemicEventAsyncTask {
         return !oldVeryStrong;
     }
 
-
+    /**
+     * 应用 Self-Healing 计算得到的一组认知变更（ClaimMutation）。
+     *
+     * <p>
+     * 这是「自我修复」真正产生副作用的唯一入口：
+     * SelfCorrectionResolver 只负责“裁决应该怎么改”，
+     * 本方法负责“把裁决结果落地到图谱（Neo4j）中”。
+     * </p>
+     *
+     * <p>
+     * 当前 v1 阶段，系统允许的认知变更类型是严格受控的三种：
+     * </p>
+     * <ul>
+     *   <li>{@link ConfidenceAdjust}：调整某条 Claim 的置信度（不改变其真假立场）</li>
+     *   <li>{@link StatusOverride}：强制覆盖 Claim 的 epistemicStatus（如 CONFIRMED → DENIED）</li>
+     *   <li>{@link RelationAttach}：在两条 Claim 之间建立认知关系（如 OVERRIDDEN_BY / OPPOSES）</li>
+     * </ul>
+     *
+     * <p>
+     * 设计原则：
+     * <ul>
+     *   <li>所有 mutation 都必须显式、可审计、可回放</li>
+     *   <li>禁止在此方法中做任何“隐式判断”或“自动推理”</li>
+     *   <li>Mutation 只是“变更指令”，不携带业务逻辑</li>
+     * </ul>
+     * </p>
+     *
+     * <p>
+     * 注意：
+     * <ul>
+     *   <li>claimId 实际上是 Claim 的 evidenceKey（五元组 key）</li>
+     *   <li>本方法假定 resolver 已保证 mutation 的合法性</li>
+     * </ul>
+     * </p>
+     */
     private void applyMutations(String userId, SelfCorrectionResult r) {
         // v1：我们只实现你现在 resolver 里已经定义的三种：
         // - ConfidenceAdjust(claimId, toConfidence)
@@ -136,18 +168,32 @@ public class HandleEpistemicEventAsyncTask {
 
         // 注意：你 resolver 里 claimId 就是 evidenceKey（五元组 key）
         for (var m : r.mutations()) {
+
+            // 1. 置信度调整（数值层面的衰减 / 提升）
             if (m instanceof ConfidenceAdjust ca) {
-                applyConfidenceAdjust(userId, ca.claimId(), ca.toConfidence());
+
+                applyConfidenceAdjust(userId, ca.claimId(), ca);
+
+                // 2. 认知状态强制覆盖（如被用户明确否认）
             } else if (m instanceof StatusOverride so) {
                 applyStatusOverride(userId, so.claimId(), so.newStatus().name());
+
+                // 3. 认知关系建立（用于可解释性与状态演化路径）
             } else if (m instanceof RelationAttach ra) {
                 applyRelationAttach(userId, ra.fromClaimId(), ra.toClaimId(), ra.type());
             }
         }
     }
 
-    private void applyConfidenceAdjust(String userId, String claimKey, double toConf) {
-        var k = keyCodec.decode(claimKey);
+    private void applyConfidenceAdjust(String userId,
+                                       String claimKey,
+                                       ConfidenceAdjust adjust) {
+        KeyCodec.DecodedKey k = keyCodec.decode(claimKey);
+        // 1. 从图谱中读取当前 confidence
+
+        double oldConfidence = loadConfidenceFromGraph(userId, k);
+        // 2. 计算新值
+        double newConfidence = adjust.toConfidence(oldConfidence);
 
         String cypher = """
         MATCH (u:User {id:$uid})-[:ASSERTS]->(c:Claim {
@@ -165,7 +211,7 @@ public class HandleEpistemicEventAsyncTask {
                     "oid", k.objectId(),
                     "q", k.quantifier().name(),
                     "pol", k.polarity(),
-                    "conf", toConf
+                    "conf", newConfidence
             )).consume());
         }
     }
@@ -199,12 +245,14 @@ public class HandleEpistemicEventAsyncTask {
         }
     }
 
-    private void applyRelationAttach(String userId, String fromKey, String toKey, String relType) {
+    private void applyRelationAttach(String userId, String fromKey,
+                                     String toKey,
+                                     ClaimRelationType relType) {
         var a = keyCodec.decode(fromKey);
         var b = keyCodec.decode(toKey);
 
         // relType 先只允许 OVERRIDDEN_BY，避免写乱
-        if (!"OVERRIDDEN_BY".equals(relType)) return;
+        if (!"OVERRIDDEN_BY".equals(relType.name())) return;
 
         String cypher = """
         MATCH (u:User {id:$uid})
@@ -233,4 +281,48 @@ public class HandleEpistemicEventAsyncTask {
             )).consume());
         }
     }
+
+
+    private double loadConfidenceFromGraph(String userId, KeyCodec.DecodedKey k) {
+        String cypher = """
+        MATCH (u:User {id: $uid})-[:ASSERTS]->(c:Claim {
+            subjectId: $sid,
+            predicate: $pred,
+            objectId: $oid,
+            quantifier: $q,
+            polarity: $pol,
+            legacy: false
+        })
+        RETURN c.confidence AS confidence
+        LIMIT 1
+        """;
+
+        try (Session session = driver.session()) {
+            return session.executeRead(tx -> {
+                var result = tx.run(
+                        cypher,
+                        parameters(
+                                "uid", userId,
+                                "sid", k.subjectId(),
+                                "pred", k.predicate().name(),
+                                "oid", k.objectId(),
+                                "q", k.quantifier().name(),
+                                "pol", k.polarity()
+                        )
+                );
+
+                if (!result.hasNext()) {
+                    throw new IllegalStateException(
+                            "Claim not found for key=" + k
+                    );
+                }
+
+                var record = result.next();
+                return record.get("confidence").asDouble();
+            });
+        }
+    }
+
+
+
 }

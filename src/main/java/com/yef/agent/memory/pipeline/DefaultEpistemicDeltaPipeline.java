@@ -64,22 +64,8 @@ public class DefaultEpistemicDeltaPipeline implements EpistemicDeltaPipeline {
 
         persistenceStage.persist(ctx.userId(), event);
 
-        ExtractedRelation extracted = ctx.extracted();
-        List<ClaimEvidence> existingClaims = claimSlotQuery.findAllInSlot(ctx.userId(),
-                extracted.subjectId(),
-                extracted.predicateType(),
-                extracted.objectId(),
-                extracted.quantifier());
-
-        var decoded = keyCodec.decode(event.triggerKey());
-        ClaimEvidence newClaim = existingClaims.stream()
-                .filter(c -> c.polarity() == decoded.polarity())
-                .findFirst()
-                .orElse(null);
-        SelfCorrectionResult r = selfCorrectionResolver.resolve(newClaim, existingClaims);
-        if(r.triggered()){
-            handleEpistemicEventAsyncTask.handle(ctx.userId(), event);
-        }
+        // 不做任何 self-healing 逻辑判断
+        handleEpistemicEventAsyncTask.handle(ctx.userId(), event);
         return event;
     }
 

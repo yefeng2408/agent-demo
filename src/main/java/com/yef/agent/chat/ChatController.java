@@ -9,6 +9,9 @@ import com.yef.agent.graph.eum.PredicateType;
 import com.yef.agent.graph.eum.Quantifier;
 import com.yef.agent.graph.llm.LlmPolisher;
 import com.yef.agent.graph.writer.Neo4jGraphWriter;
+import com.yef.agent.memory.explain.biz.ExplainableAnswerBuilder;
+import com.yef.agent.memory.pipeline.EpistemicDeltaPipeline;
+import com.yef.agent.memory.selector.biz.DominantClaimSelector;
 import com.yef.agent.service.ClaimConfidenceService;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -33,13 +36,22 @@ public class ChatController {
     private final Neo4jGraphWriter neo4jGraphWriter;
     private final ClaimConfidenceService claimConfidenceService;
 
+    private final EpistemicDeltaPipeline deltaPipeline;
+    private final DominantClaimSelector dominantSelector;
+    private final ExplainableAnswerBuilder answerBuilder;
+
     public ChatController(@Qualifier("personalChatClient") ChatClient personalChatClient,
                           PersonaMemoryAdvisor personaMemoryAdvisor,
                           UserPersonaAdvisor userPersonaAdvisor,
                           Neo4jGraphAnswerer graphAnswerer,
                           LlmPolisher llmPolisher,
                           Neo4jGraphWriter neo4jGraphWriter,
-                          ClaimConfidenceService claimConfidenceService) {
+                          ClaimConfidenceService claimConfidenceService,
+                          EpistemicDeltaPipeline deltaPipeline,
+                          DominantClaimSelector dominantSelector,
+                          ExplainableAnswerBuilder answerBuilder
+
+    ) {
         this.personalChatClient = personalChatClient;
         this.personaMemoryAdvisor = personaMemoryAdvisor;
         this.userPersonaAdvisor = userPersonaAdvisor;
@@ -47,6 +59,9 @@ public class ChatController {
         this.llmPolisher = llmPolisher;
         this.neo4jGraphWriter=neo4jGraphWriter;
         this.claimConfidenceService=claimConfidenceService;
+        this.deltaPipeline=deltaPipeline;
+        this.dominantSelector=dominantSelector;
+        this.answerBuilder=answerBuilder;
     }
 
 

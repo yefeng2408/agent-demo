@@ -4,11 +4,13 @@ import com.yef.agent.graph.answer.ClaimEvidence;
 import com.yef.agent.memory.EpistemicStatus;
 import com.yef.agent.memory.selector.biz.DominantClaimSelector;
 import com.yef.agent.memory.selector.biz.DominantDecision;
+import org.springframework.stereotype.Component;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+@Component
 public class DefaultDominantClaimSelector implements DominantClaimSelector {
 
     @Override
@@ -63,8 +65,7 @@ public class DefaultDominantClaimSelector implements DominantClaimSelector {
         }
 
         // 6️⃣ fallback：按 confidence 最大
-        ClaimEvidence best =
-                candidates.stream()
+        ClaimEvidence best = candidates.stream()
                         .max(Comparator.comparingDouble(ClaimEvidence::confidence))
                         .orElse(null);
 

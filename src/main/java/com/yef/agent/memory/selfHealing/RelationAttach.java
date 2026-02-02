@@ -20,8 +20,17 @@ public record RelationAttach(
         ClaimRelationType relationType
 ) implements ClaimMutation {
 
+
     @Override
     public String claimKey() {
-        return "";
+        return fromClaimId;
     }
+
+    /**
+     * 返回要写入图谱的 Claim 关系类型。
+     */
+    public ClaimRelationType type() {
+        return relationType;
+    }
+
 }

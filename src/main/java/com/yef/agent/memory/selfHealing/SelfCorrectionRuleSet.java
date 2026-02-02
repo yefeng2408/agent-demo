@@ -35,7 +35,8 @@ public class SelfCorrectionRuleSet {
                 (n, o) -> List.of(
                         new ConfidenceAdjust(key(o), -0.30),
                         new StatusOverride(key(o), EpistemicStatus.DENIED),
-                        new RelationAttach(key(o), key(n), "OVERRIDDEN_BY")
+                        //new RelationAttach(key(o), key(n), "OVERRIDDEN_BY")
+                        new RelationAttach(key(o), key(n), ClaimRelationType.SUPERSEDES)
                 )
         );
     }
@@ -45,13 +46,25 @@ public class SelfCorrectionRuleSet {
         return new SelfCorrectionRule(
                 "R2_MEDIUM_USER_SELF_CORRECTION",
                 80,
-                (n, o) -> sameSlot(n, o)
-                        && n.polarity() != o.polarity()
-                        && isUser(n)
-                        && o.epistemicStatus() == EpistemicStatus.WEAKLY_SUPPORTED,
-                (n, o) -> List.of(
-                        new ConfidenceAdjust(key(o), -0.15),
-                        new RelationAttach(key(o), key(n), "OPPOSED_BY")
+
+                // condition
+                (ClaimEvidence n, ClaimEvidence o) ->
+                        sameSlot(n, o)
+                                && n.polarity() != o.polarity()
+                                && isUser(n)
+                                && o.epistemicStatus() == EpistemicStatus.HYPOTHETICAL,
+
+                // mutations
+                (ClaimEvidence n, ClaimEvidence o) -> List.of(
+                        new ConfidenceAdjust(
+                                key(o),
+                                -0.15
+                        ),
+                        new RelationAttach(
+                                key(o),
+                                key(n),
+                                ClaimRelationType.OPPOSES
+                        )
                 )
         );
     }

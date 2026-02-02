@@ -43,9 +43,9 @@ neo4j:
   username: neo4j
   password: Neo4j@2026!
 
-migration:
-  enabled: true
-  batchSize: 200
+#migration:
+#  enabled: true
+#  batchSize: 200
 
 logging:
   level:

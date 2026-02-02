@@ -15,4 +15,10 @@ import com.yef.agent.memory.EpistemicStatus;
 public record StatusOverride(
         String claimId,
         EpistemicStatus newStatus
-) implements ClaimMutation {}
+) implements ClaimMutation {
+
+    @Override
+    public String claimKey() {
+        return claimId;
+    }
+}

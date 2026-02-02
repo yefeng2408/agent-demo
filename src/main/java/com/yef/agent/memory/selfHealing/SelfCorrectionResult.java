@@ -20,7 +20,10 @@ public record SelfCorrectionResult(
 ) {
 
     public static SelfCorrectionResult noop() {
-        return new SelfCorrectionResult(false, List.of(), Optional.empty());
+        return new SelfCorrectionResult(
+                false,
+                List.of(),
+                Optional.empty());
     }
 
 

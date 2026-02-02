@@ -5,14 +5,14 @@ import com.yef.agent.graph.eum.PredicateType;
 import com.yef.agent.graph.eum.Quantifier;
 import com.yef.agent.graph.eum.Source;
 import com.yef.agent.memory.EpistemicStatus;
+import com.yef.agent.memory.explain.biz.ExplainableAnswerBuilder;
+import com.yef.agent.memory.selector.biz.DominantClaimSelector;
+import com.yef.agent.memory.selector.biz.DominantDecision;
 import org.neo4j.driver.*;
 import org.neo4j.driver.Record;
 import org.springframework.stereotype.Component;
 import java.util.*;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
-
 import static org.neo4j.driver.Values.parameters;
 
 @Component
@@ -26,11 +26,17 @@ public class Neo4jGraphAnswerer implements GraphAnswerer {
     private static final Pattern Q_ROLE = Pattern.compile("职业|工作|做什么|干什么|岗位|角色", Pattern.CASE_INSENSITIVE);
     private static final Pattern Q_OWNS = Pattern.compile("有车|有没有车|买车|开车|特斯拉|汽车", Pattern.CASE_INSENSITIVE);
 
-    // 建议门槛：0.6；迁移数据 0.95
+    //该数值越小，查询到的claim越多。仲裁阶段的可解释性越强
     private static final double MIN_CONF = 0.2;
 
-    public Neo4jGraphAnswerer(Driver driver) {
+    private final DominantClaimSelector dominantClaimSelector;
+    private final ExplainableAnswerBuilder explainableAnswerBuilder;
+
+    public Neo4jGraphAnswerer(Driver driver,
+                              DominantClaimSelector dominantClaimSelector, ExplainableAnswerBuilder explainableAnswerBuilder) {
         Neo4jGraphAnswerer.driver = driver;
+        this.dominantClaimSelector = dominantClaimSelector;
+        this.explainableAnswerBuilder = explainableAnswerBuilder;
     }
 
     @Override
@@ -55,154 +61,27 @@ public class Neo4jGraphAnswerer implements GraphAnswerer {
     }
 
     private AnswerResult answerOwns(String userId) {
-
-        // 1) 召回：拿到同 predicate 的候选（阈值低一点，别丢证据）
+        // 1) 召回：OWNS 的所有候选（不丢证据）
         List<ClaimEvidence> candidates = queryClaims(userId, PredicateType.OWNS);
-
-        if (candidates.isEmpty()) {
+        if (candidates == null || candidates.isEmpty()) {
             return AnswerResult.unanswered();
         }
-
-
-        DominantDecision decision =
-                dominantClaimSelector.select(claims);
-
-        // 2) 聚合成 “同 proposition 的正反对”（这里你当前只问 Tesla，就按 objectId=BRAND:Tesla 聚合也行）
-        ClaimEvidence bestTrue  = bestBy(candidates, /*polarity*/ true);
-        ClaimEvidence bestFalse = bestBy(candidates, /*polarity*/ false);
-
-        // 3) 三态裁决：只对 CONFIRMED 给肯定/否定，否则不确定
-        boolean trueConfirmed  = bestTrue  != null && bestTrue.epistemicStatus() == EpistemicStatus.CONFIRMED;
-        boolean falseConfirmed = bestFalse != null && bestFalse.epistemicStatus() == EpistemicStatus.CONFIRMED;
-
-        // 3.1 单边确认
-        if (trueConfirmed && !falseConfirmed) {
-            return AnswerResult.ok("我目前拥有一辆特斯拉。", relationFrom(bestTrue), citationsOf(bestTrue), null);
-        }
-        if (falseConfirmed && !trueConfirmed) {
-            return AnswerResult.ok("我目前并不拥有特斯拉。", relationFrom(bestFalse), citationsOf(bestFalse), null);
-        }
-
-        // 3.2 双边都确认（极少，但必须处理）
-        if (trueConfirmed && falseConfirmed) {
-            return AnswerResult.ok(
-                    "关于我是否拥有特斯拉，目前存在相互矛盾且都很强的证据，我需要进一步确认（例如最近一次变更发生在什么时候）。",
-                    relationFrom(stronger(bestTrue,bestFalse)),
-                    citationsOfBoth(bestTrue,bestFalse),
-                    List.of("你最后一次说“有/没有特斯拉”分别是什么时候？")
-            );
-        }
-
-        // 3.3 都没确认：不确定态（这里就是你现在经常遇到的情况）
-        return AnswerResult.ok(
-                "关于我是否拥有特斯拉，目前证据强度不足，尚未形成稳定结论。",
-                relationFrom(bestTrue != null ? bestTrue : bestFalse),
-                citationsOfTop2(bestTrue, bestFalse),
-                List.of("你是想更新你的最新状态吗？（例如：现在是否拥有特斯拉）")
-        );
+        // ① 认知裁决（只做“判断”）
+        DominantDecision decision = dominantClaimSelector.select(candidates);
+        // ② 生成可解释回答（只做“表达”）
+        AnswerResult result = explainableAnswerBuilder.buildOwnsAnswer(
+                        userId,
+                        "特斯拉",
+                        decision,
+                        candidates);
+        return result;
     }
 
-
-    private ExtractedRelation relationFrom(ClaimEvidence bestTrue) {
-        return ExtractedRelation.fromEvidence(bestTrue,Source.QUESTION);
-    }
-
-    private List<Citation> citationsOf(ClaimEvidence bestTrue) {
-        if (bestTrue == null) return List.of();
-        return List.of(Citation.from(bestTrue));
-    }
-
-    /**
-     * 双方都很强，我摊牌
-     * @param bestTrue
-     * @param bestFalse
-     * @return
-     */
-    private List<Citation> citationsOfBoth(
-            ClaimEvidence bestTrue,
-            ClaimEvidence bestFalse) {
-        List<Citation> list = new ArrayList<>();
-        if (bestTrue != null) list.add(Citation.from(bestTrue));
-        if (bestFalse != null) list.add(Citation.from(bestFalse));
-        return list;
-    }
-
-    /**
-     * 不确定态，但给你最有代表性的证据
-     * @param bestTrue
-     * @param bestFalse
-     * @return
-     */
-    private List<Citation> citationsOfTop2(
-            ClaimEvidence bestTrue,
-            ClaimEvidence bestFalse) {
-        return Stream.of(bestTrue, bestFalse)
-                .filter(Objects::nonNull)
-                .sorted(Comparator.comparing(ClaimEvidence::confidence).reversed())
-                .limit(2)
-                .map(Citation::from)
-                .toList();
-    }
-
-    /**
-     * epistemicStatus 优先级 + confidence + 新鲜度（recently time）。 谁更有资格代表正方 / 反方
-     *
-     * @param list
-     * @param polarity
-     * @return
-     */
-    private ClaimEvidence bestBy(List<ClaimEvidence> list, boolean polarity) {
-        return list.stream()
-                .filter(c -> c.polarity() == polarity)
-                .sorted(
-                        Comparator
-                                // 1️⃣ CONFIRMED 永远优先
-                                .comparing((ClaimEvidence c) -> c.epistemicStatus() == EpistemicStatus.CONFIRMED)
-                                .reversed()
-                                // 2️⃣ 置信度
-                                .thenComparing(ClaimEvidence::confidence)
-                                .reversed()
-                                // 3️⃣ 最近更新时间
-                                .thenComparing(ClaimEvidence::updatedAt, Comparator.reverseOrder())
-                )
-                .findFirst()
-                .orElse(null);
-    }
-
-    private ClaimEvidence stronger(ClaimEvidence a, ClaimEvidence b) {
-        if (a == null) return b;
-        if (b == null) return a;
-
-        // 1️⃣ 先看置信度
-        int byConf = Double.compare(a.confidence(), b.confidence());
-        if (byConf != 0) {
-            return byConf > 0 ? a : b;
-        }
-        // 2️⃣ 再看更新时间
-        return a.updatedAt().isAfter(b.updatedAt()) ? a : b;
-    }
-
-
-    String explainOwns(ClaimEvidence c) {
-        if (c.quantifier() == Quantifier.ANY && !c.polarity()) {
-            return "我目前没有任何车辆。";
-        }
-        if (c.quantifier() == Quantifier.ANY && c.polarity()) {
-            return "我至少拥有一辆车。";
-        }
-        if (c.quantifier() == Quantifier.ONE && c.polarity()) {
-            return "我拥有一辆车（" + c.objectId() + "）。";
-        }
-        if (c.quantifier() == Quantifier.ONE && !c.polarity()) {
-            return "我目前不拥有这辆车（" + c.objectId() + "）。";
-        }
-        return "关于我是否拥有车辆，目前信息不足。";
-    }
 
     /**
      * NAME / BORN_YEAR / HAS_ROLE 这类：ONE + polarity=true 的单值事实
      */
-    private AnswerResult answerSingleValue(String userId,
+  /*  private AnswerResult answerSingleValue(String userId,
                                            PredicateType predicate,
                                            String objectPrefix,
                                            String template) {
@@ -223,12 +102,12 @@ public class Neo4jGraphAnswerer implements GraphAnswerer {
         String value = stripPrefix(objectId, objectPrefix);
         ExtractedRelation relation = ExtractedRelation.fromEvidence(top, Source.QUESTION);
         return AnswerResult.ok(String.format(template, value), relation, citations, null);
-    }
+    }*/
 
     /**
      * 临时测试方法  OWNS：优先 ANY 的否定，再找具体肯定
      */
-    private AnswerResult answerOwnsCar(String userId) {
+   /* private AnswerResult answerOwnsCar(String userId) {
         List<ClaimEvidence> evidences = queryClaims(userId, PredicateType.OWNS);
         ClaimEvidence top = evidences.get(0);
 
@@ -264,26 +143,7 @@ public class Neo4jGraphAnswerer implements GraphAnswerer {
             return AnswerResult.ok("我能确定我不拥有其中某些车（例如特定品牌），但是否有车需要更多信息。", relation, citations, null);
         }
         return AnswerResult.unanswered();
-    }
-
-    private List<Citation> toCitations(List<ClaimEvidence> rows) {
-        List<Citation> citations = new ArrayList<>();
-        for (ClaimEvidence claimEvi : rows) {
-            Citation citation = new Citation(
-                    claimEvi.predicate().name(),
-                    claimEvi.subjectId(),
-                    claimEvi.objectId(),
-                    claimEvi.quantifier().name(),
-                    claimEvi.polarity(),
-                    claimEvi.confidence(),
-                    claimEvi.source().name(),
-                    claimEvi.batch(),
-                    claimEvi.updatedAt()
-            );
-            citations.add(citation);
-        }
-        return citations;
-    }
+    }*/
 
 
     public static List<ClaimEvidence> queryClaims(String userId, PredicateType predicate) {
@@ -379,9 +239,5 @@ public class Neo4jGraphAnswerer implements GraphAnswerer {
         };
     }
 
-    private static String stripPrefix(String s, String prefix) {
-        if (s == null) return "";
-        if (prefix == null) return s;
-        return s.startsWith(prefix) ? s.substring(prefix.length()) : s;
-    }
+
 }
