@@ -36,7 +36,7 @@ public class ClaimConfidenceService {
 
     public void applyAnswer(String userId, AnswerResult result,ExtractedRelation newExtractedRelation) {
         log.info("applyAnswer CALLED for user={}, relation={}", userId, result.relation());
-        if (result == null || !result.answered() || result.relation() == null) return;
+        if (result == null ) return;
 
         Citation dominant = pickDominant(result);
         if (dominant == null) return;

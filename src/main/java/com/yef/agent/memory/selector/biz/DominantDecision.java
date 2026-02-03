@@ -5,6 +5,9 @@ import com.yef.agent.memory.selector.DecisionReason;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * 裁决结果顶层接口
+ */
 public interface DominantDecision {
 
     /**

@@ -88,13 +88,16 @@ public class ChatController {
     public String chat(@RequestParam String msg, @RequestParam(defaultValue = "debug-user") String userId) {
         // ✅ Step 1: Graph 优先裁决（v3 核心）
         AnswerResult graphAnswer = graphAnswerer.answer(userId, msg);
-        if (graphAnswer.answered()) {
+        //只要裁决结果不为null，就要走后续演化的逻辑
+        if (graphAnswer.decision()!=null) {
             String explain = llmPolisher.explain(graphAnswer);
-            neo4jGraphWriter.writeAnswer(
-                    userId,
-                    graphAnswer.relation(),
-                    graphAnswer.citations(),
-                    explain);
+            if(graphAnswer.relation()!=null) {
+                neo4jGraphWriter.writeAnswer(
+                        userId,
+                        graphAnswer.relation(),
+                        graphAnswer.citations(),
+                        explain);
+            }
             ExtractedRelation newExtractedRelation = extractFromMsg(msg, userId);
             claimConfidenceService.applyAnswer(userId, graphAnswer,newExtractedRelation);
             return explain;

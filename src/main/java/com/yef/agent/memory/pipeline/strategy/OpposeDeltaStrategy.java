@@ -11,12 +11,14 @@ import com.yef.agent.graph.eum.Quantifier;
 import com.yef.agent.memory.ClaimDelta;
 import com.yef.agent.memory.DeltaDirection;
 import com.yef.agent.memory.pipeline.EpistemicContext;
+import lombok.extern.slf4j.Slf4j;
 import org.neo4j.driver.Driver;
 import org.neo4j.driver.Session;
 import org.springframework.stereotype.Component;
 import java.util.List;
 import static org.neo4j.driver.Values.parameters;
 
+@Slf4j
 @Component
 public class OpposeDeltaStrategy implements DeltaStrategy {
 
@@ -79,7 +81,8 @@ public class OpposeDeltaStrategy implements DeltaStrategy {
                 opposite.quantifier(),
                 opposite.polarity()
         );
-
+        log.info("---> domBefore={}", domBefore);
+        log.info("---> oppBefore={}", oppBefore);
         // 3️⃣ 计算 delta（方向很重要）
         double stepDominant = deltaComputer.computeStep(domBefore.confidence());
         double stepOppose = deltaComputer.computeStep(oppBefore.confidence());

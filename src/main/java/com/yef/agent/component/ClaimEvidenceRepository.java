@@ -5,12 +5,14 @@ import com.yef.agent.graph.eum.PredicateType;
 import com.yef.agent.graph.eum.Quantifier;
 import com.yef.agent.graph.eum.SourceAdapter;
 import com.yef.agent.memory.EpistemicStatus;
+import lombok.extern.slf4j.Slf4j;
 import org.jetbrains.annotations.NotNull;
 import org.neo4j.driver.Driver;
 import org.neo4j.driver.Session;
 import org.springframework.stereotype.Component;
 import static org.neo4j.driver.Values.parameters;
 
+@Slf4j
 @Component
 public class ClaimEvidenceRepository {
 
@@ -35,6 +37,10 @@ public class ClaimEvidenceRepository {
     }
 
 
+    public ClaimEvidence getOpposeEvidence(String userId,ClaimEvidence c) {
+        return getClaimEvidence(userId, c.subjectId(), c.predicate(), c.objectId(), c.quantifier(), !c.polarity());
+    }
+
 
     public ClaimEvidence loadClaimEvidence(
             String userId,
@@ -43,11 +49,11 @@ public class ClaimEvidenceRepository {
             String objectId,
             Quantifier quantifier,
             boolean polarity) {
-        return getClaimEvidence(userId, subjectId, predicate, objectId, quantifier, polarity, driver);
+        return getClaimEvidence(userId, subjectId, predicate, objectId, quantifier, polarity);
     }
 
     @NotNull
-    public static ClaimEvidence getClaimEvidence(String userId, String subjectId, PredicateType predicate, String objectId, Quantifier quantifier, boolean polarity, Driver driver) {
+    public ClaimEvidence getClaimEvidence(String userId, String subjectId, PredicateType predicate, String objectId, Quantifier quantifier, boolean polarity) {
         String cypher = """
         MATCH (u:User {id:$uid})-[:ASSERTS]->(c:Claim {
           subjectId:$sid,
@@ -86,7 +92,7 @@ public class ClaimEvidenceRepository {
             String statusStr = rec.get("epistemicStatus").isNull() ? null : rec.get("epistemicStatus").asString();
             EpistemicStatus epistemicStatus = EpistemicStatus.fromGraph(statusStr);
 
-            return new ClaimEvidence(
+            ClaimEvidence claimEvidence = new ClaimEvidence(
                     rec.get("subjectId").asString(),
                     PredicateType.valueOf(predStr),
                     rec.get("objectId").asString(),
@@ -99,6 +105,8 @@ public class ClaimEvidenceRepository {
                     rec.get("updatedAt").isNull() ? null : rec.get("updatedAt").asZonedDateTime().toInstant(),
                     rec.get("priority").asInt()
             );
+            log.info("ClaimEvidenceRepository.getClaimEvidence result:{}", claimEvidence);
+            return claimEvidence;
         }
     }
 

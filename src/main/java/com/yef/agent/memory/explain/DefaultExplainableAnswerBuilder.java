@@ -59,7 +59,9 @@ public class DefaultExplainableAnswerBuilder
                     answer,
                     toRelation(c),
                     citations,
-                    explanations
+                    explanations,
+                    decision
+
             );
         }
 
@@ -69,7 +71,8 @@ public class DefaultExplainableAnswerBuilder
                 "关于我是否拥有" + objectName + "，目前尚无法形成稳定结论。",
                 null,
                 citations,
-                explanations
+                explanations,
+                decision
         );
     }
 
