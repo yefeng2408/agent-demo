@@ -17,3 +17,28 @@ EpistemicDeltaPipeline
    │
    └─▶ EpistemicEventPersistenceStage
           └─ persist SupportEvent / OpposeEvent
+
+
+
+某个 claim 的状态演化路径（按时间）cypher：
+MATCH (u:User {id:$uid})-[:HAS_TRANSITION]->(t:StatusTransition {claimKey:$claimKey})
+RETURN t
+ORDER BY t.at ASC
+
+画“链路图”（t 节点串起来）
+MATCH (u:User {id:$uid})-[:HAS_TRANSITION]->(t:StatusTransition {claimKey:$claimKey})
+WITH t ORDER BY t.at ASC
+WITH collect(t) AS ts
+UNWIND range(0, size(ts)-2) AS i
+WITH ts[i] AS a, ts[i+1] AS b
+MERGE (a)-[:NEXT]->(b)
+RETURN a,b
+
+用户最近 50 次状态变化总览（用于 demo）
+MATCH (u:User {id:$uid})-[:HAS_TRANSITION]->(t:StatusTransition)
+RETURN t.claimKey, t.from, t.to, t.beforeConf, t.afterConf, t.direction, t.at
+ORDER BY t.at DESC
+LIMIT 50
+
+
+

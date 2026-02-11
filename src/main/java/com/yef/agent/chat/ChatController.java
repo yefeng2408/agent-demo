@@ -4,21 +4,22 @@ import com.yef.agent.advisor.PersonaMemoryAdvisor;
 import com.yef.agent.advisor.UserPersonaAdvisor;
 import com.yef.agent.graph.ExtractedRelation;
 import com.yef.agent.graph.answer.AnswerResult;
+import com.yef.agent.graph.answer.GraphAnswerer;
 import com.yef.agent.graph.answer.Neo4jGraphAnswerer;
-import com.yef.agent.graph.eum.PredicateType;
-import com.yef.agent.graph.eum.Quantifier;
+import com.yef.agent.graph.eum.InteractionType;
+import com.yef.agent.graph.extract.*;
 import com.yef.agent.graph.llm.LlmPolisher;
 import com.yef.agent.graph.writer.Neo4jGraphWriter;
-import com.yef.agent.memory.explain.biz.ExplainableAnswerBuilder;
-import com.yef.agent.memory.pipeline.EpistemicDeltaPipeline;
-import com.yef.agent.memory.selector.biz.DominantClaimSelector;
 import com.yef.agent.service.ClaimConfidenceService;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.stereotype.Component;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,11 +35,9 @@ public class ChatController {
     private final Neo4jGraphAnswerer graphAnswerer;
     private final LlmPolisher llmPolisher;
     private final Neo4jGraphWriter neo4jGraphWriter;
-    private final ClaimConfidenceService claimConfidenceService;
+    private final LlmInteractionAdapter llmInteractionAdapter;
+    private final EpistemicRouter epistemicRouter;
 
-    private final EpistemicDeltaPipeline deltaPipeline;
-    private final DominantClaimSelector dominantSelector;
-    private final ExplainableAnswerBuilder answerBuilder;
 
     public ChatController(@Qualifier("personalChatClient") ChatClient personalChatClient,
                           PersonaMemoryAdvisor personaMemoryAdvisor,
@@ -46,22 +45,17 @@ public class ChatController {
                           Neo4jGraphAnswerer graphAnswerer,
                           LlmPolisher llmPolisher,
                           Neo4jGraphWriter neo4jGraphWriter,
-                          ClaimConfidenceService claimConfidenceService,
-                          EpistemicDeltaPipeline deltaPipeline,
-                          DominantClaimSelector dominantSelector,
-                          ExplainableAnswerBuilder answerBuilder
-
-    ) {
+                          LlmInteractionAdapter llmInteractionAdapter,
+                          EpistemicRouter epistemicRouter
+                          ) {
         this.personalChatClient = personalChatClient;
         this.personaMemoryAdvisor = personaMemoryAdvisor;
         this.userPersonaAdvisor = userPersonaAdvisor;
         this.graphAnswerer=graphAnswerer;
         this.llmPolisher = llmPolisher;
         this.neo4jGraphWriter=neo4jGraphWriter;
-        this.claimConfidenceService=claimConfidenceService;
-        this.deltaPipeline=deltaPipeline;
-        this.dominantSelector=dominantSelector;
-        this.answerBuilder=answerBuilder;
+        this.llmInteractionAdapter = llmInteractionAdapter;
+        this.epistemicRouter = epistemicRouter;
     }
 
 
@@ -79,16 +73,25 @@ public class ChatController {
      * Neo4jGraphWriter.writeAnswer（写回）
      *    ↓
      * ClaimConfidenceService（状态更新）
-     * 
+     *
      * @param msg
      * @param userId
      * @return
      */
     @GetMapping("/personal")
     public String chat(@RequestParam String msg, @RequestParam(defaultValue = "debug-user") String userId) {
-        // ✅ Step 1: Graph 优先裁决（v3 核心）
+        InteractionClassifier.ClassificationResult cls = llmInteractionAdapter.classify(userId, msg);
+
+        InteractionType type = (cls == null || cls.interactionType() == null)
+                ? SimpleInteractionClassifier.classify(msg)
+                : cls.interactionType();
+
+        if (type != InteractionType.ASK) {
+            return epistemicRouter.handleWrite(userId, msg, type);
+        }
+
+        // ASK path
         AnswerResult graphAnswer = graphAnswerer.answer(userId, msg);
-        //只要裁决结果不为null，就要走后续演化的逻辑
         if (graphAnswer.decision()!=null) {
             String explain = llmPolisher.explain(graphAnswer);
             if(graphAnswer.relation()!=null) {
@@ -98,11 +101,10 @@ public class ChatController {
                         graphAnswer.citations(),
                         explain);
             }
-            ExtractedRelation newExtractedRelation = extractFromMsg(msg, userId);
-            claimConfidenceService.applyAnswer(userId, graphAnswer,newExtractedRelation);
             return explain;
         }
-        // ⬇️ Step 2: LLM fallback（v2 仍在）
+
+        // fallback to LLM
         Map<String, Object> metadata = new HashMap<>();
         metadata.put("readOnly", true);
         //metadata.put("disableClaimWrite", true);
@@ -132,26 +134,58 @@ public class ChatController {
         return answer;
     }
 
-    //(subjectId=userId, predicate, objectId, quantifier, polarity)
-   public ExtractedRelation extractFromMsg(String msg, String userId) {
-        if (msg.contains("不拥有") || msg.contains("没有")) {
-            return ExtractedRelation.forUserStatement(
-                    userId,
-                    PredicateType.OWNS,
-                    "BRAND:Tesla",
-                    Quantifier.ONE,
-                    false);
+}
 
-        }
-        if (msg.contains("拥有")) {
-            return ExtractedRelation.forUserStatement(
-                    userId,
-                    PredicateType.OWNS,
-                    "BRAND:Tesla",
-                    Quantifier.ONE,
-                    true);
-        }
-        return null;
+@Slf4j
+@Component
+ class EpistemicRouter {
+
+    private final GraphRelationExtractor relationExtractor;
+    private final GraphAnswerer graphAnswerer;
+    private final ClaimConfidenceService claimConfidenceService;
+
+    EpistemicRouter(GraphRelationExtractor relationExtractor,
+                    GraphAnswerer graphAnswerer,
+                    ClaimConfidenceService claimConfidenceService) {
+        this.relationExtractor = relationExtractor;
+        this.graphAnswerer = graphAnswerer;
+        this.claimConfidenceService = claimConfidenceService;
     }
+
+    public String handleWrite(String userId, String msg, InteractionType type) {
+        if (type == InteractionType.ASK) {
+            return "ASK 不允许写入";
+        }
+        // ASSERT / CHALLENGE 才会进来
+        List<ExtractedRelation> relations = relationExtractor.extract(userId, msg);
+        if (relations == null || relations.isEmpty()) {
+            return "未抽取到可写入的关系";
+        }
+
+        ExtractedRelation r = relations.stream()
+                .max(Comparator.comparingDouble(ExtractedRelation::confidence))
+                .orElse(relations.get(0));
+
+        // 注意：这里不能调用 graphAnswerer.answer(msg)
+        AnswerResult dominantView = graphAnswerer.answerByRelation(userId, r);
+
+        // 如果没有任何历史 claim，这是“首个断言”
+        if (dominantView == null
+                || dominantView.citations() == null
+                || dominantView.citations().isEmpty()) {
+
+            // 👉 直接创建新 claim（不走 applyAnswer）
+            claimConfidenceService.createInitialClaim(userId, r);
+            return "已写入（首次声明）: " + r.toReadableText();
+        }
+
+        // ✅ applyAnswer 只允许在 ASSERT/CHALLENGE
+        claimConfidenceService.applyAnswer(userId, dominantView, r,type);
+
+        return "已写入/更新: " + r.toReadableText();
+    }
+
+
+
 
 }

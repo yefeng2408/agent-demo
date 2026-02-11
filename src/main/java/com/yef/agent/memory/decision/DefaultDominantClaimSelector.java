@@ -1,9 +1,9 @@
-package com.yef.agent.memory.selector;
+package com.yef.agent.memory.decision;
 
 import com.yef.agent.graph.answer.ClaimEvidence;
 import com.yef.agent.memory.EpistemicStatus;
-import com.yef.agent.memory.selector.biz.DominantClaimSelector;
-import com.yef.agent.memory.selector.biz.DominantDecision;
+import com.yef.agent.memory.decision.biz.DominantClaimSelector;
+import com.yef.agent.memory.decision.biz.DominantDecision;
 import org.springframework.stereotype.Component;
 import java.util.Comparator;
 import java.util.List;

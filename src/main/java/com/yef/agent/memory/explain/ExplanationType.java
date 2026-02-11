@@ -15,12 +15,15 @@ public enum ExplanationType {
     FOLLOW_UP_SUGGESTION,
 
     /** 不确定态的根本原因（不是数值，是认知判断） */
-    UNCERTAIN_REASON,
+    //UNCERTAIN_REASON,
 
     /** 引导用户澄清事实（触发下一次 claim 写入） */
-    CLARIFY_QUESTION,
+    //CLARIFY_QUESTION,
 
     /** 认知状态迁移说明（为什么从 A → B） */
-    STATUS_TRANSITION
+    STATUS_TRANSITION,
+
+    /** 覆盖原因 */
+    OVERRIDDEN_REASON
 
 }

@@ -12,6 +12,7 @@ import java.util.List;
 
 @Slf4j
 @Component
+@Deprecated
 public class GraphRelationExtractorV3 implements GraphRelationExtractor {
 
     private final ChatClient chatClient;
@@ -41,8 +42,7 @@ public class GraphRelationExtractorV3 implements GraphRelationExtractor {
                     .content();
 
             // 关键：严格 JSON → DTO
-            List<ExtractedRelation> relations =
-                    objectMapper.readValue(json, new TypeReference<>() {});
+            List<ExtractedRelation> relations = objectMapper.readValue(json, new TypeReference<>() {});
 
             // 额外兜底校验（防止 LLM 偷懒）
             relations.forEach(this::validate);

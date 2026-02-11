@@ -183,8 +183,7 @@ public class UserPersonaAdvisor {
             String userId,
             Long beliefId,
             String status,
-            Double confidence
-    ) {
+            Double confidence) {
         // 1️⃣ 手动生成 embedding（你这一步一直是对的）
         float[] vector = embeddingModel.embed(memoryText);
         // 1. 将 float[] 转换为 List<Float>

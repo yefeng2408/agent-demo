@@ -60,6 +60,7 @@ public class ClaimSlotQuery {
                                 c.get("source").isNull() ? null : Source.valueOf(c.get("source").asString()),
                                 c.get("batch").isNull() ? null : c.get("batch").asString(),
                                 c.get("updatedAt").isNull() ? null : c.get("updatedAt").asZonedDateTime().toInstant(),
+                                c.get("lastStatusChangedAt").isNull() ? null : c.get("lastStatusChangedAt").asZonedDateTime().toInstant(),
                                 c.get("priority").isNull() ? 0 : c.get("priority").asInt()
                         );
                     })

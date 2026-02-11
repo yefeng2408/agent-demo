@@ -1,6 +1,6 @@
 package com.yef.agent.memory.pipeline.strategy;
 
-import com.yef.agent.component.ClaimEvidenceRepository;
+import com.yef.agent.repository.impl.ClaimEvidenceRepositoryImpl;
 import com.yef.agent.component.DeltaComputer;
 import com.yef.agent.component.KeyCodec;
 import com.yef.agent.graph.ExtractedRelation;
@@ -8,8 +8,8 @@ import com.yef.agent.graph.answer.Citation;
 import com.yef.agent.graph.answer.ClaimEvidence;
 import com.yef.agent.graph.eum.PredicateType;
 import com.yef.agent.graph.eum.Quantifier;
+import com.yef.agent.graph.eum.SemanticRelation;
 import com.yef.agent.memory.ClaimDelta;
-import com.yef.agent.memory.DeltaDirection;
 import com.yef.agent.memory.pipeline.EpistemicContext;
 import lombok.extern.slf4j.Slf4j;
 import org.neo4j.driver.Driver;
@@ -23,13 +23,13 @@ import static org.neo4j.driver.Values.parameters;
 public class OpposeDeltaStrategy implements DeltaStrategy {
 
     private final Driver driver;
-    private final ClaimEvidenceRepository evidenceRepo;
+    private final ClaimEvidenceRepositoryImpl evidenceRepo;
     private final DeltaComputer deltaComputer;
     private final KeyCodec keyCodec;
 
     public OpposeDeltaStrategy(
             Driver driver,
-            ClaimEvidenceRepository evidenceRepo,
+            ClaimEvidenceRepositoryImpl evidenceRepo,
             DeltaComputer deltaComputer,
             KeyCodec keyCodec) {
         this.driver = driver;
@@ -41,28 +41,20 @@ public class OpposeDeltaStrategy implements DeltaStrategy {
     @Override
     public boolean supports(EpistemicContext ctx) {
         // 简化版：存在 opposite 即认为是 oppose
-        return ctx.opposite() != null;
+        //return ctx.opposite() != null;
+        return ctx.semanticRelation() == SemanticRelation.OPPOSE;
     }
 
     @Override
     public List<ClaimDelta> apply(EpistemicContext ctx) {
-        // 下一步我们一步一步写
-        return doApplyOppose(ctx);
-    }
-
-    @Override
-    public double clamp(double v) {
-        return Math.max(0.0, Math.min(1.0, v));
-    }
-
-
-    private List<ClaimDelta> doApplyOppose(EpistemicContext ctx) {
+        /*// 下一步我们一步一步写
+        return doApplyOppose(ctx);*/
 
         String userId = ctx.userId();
         Citation dominant = ctx.dominant();
         ExtractedRelation opposite = ctx.opposite();
 
-        // 1️⃣ 读取 dominant（被反驳）
+        // 1️⃣ 读取 before
         ClaimEvidence domBefore = evidenceRepo.loadClaimEvidence(
                 userId,
                 dominant.subjectId(),
@@ -72,7 +64,6 @@ public class OpposeDeltaStrategy implements DeltaStrategy {
                 dominant.polarity()
         );
 
-        // 2️⃣ 读取 opposite（被加强）
         ClaimEvidence oppBefore = evidenceRepo.loadClaimEvidence(
                 userId,
                 opposite.subjectId(),
@@ -81,34 +72,33 @@ public class OpposeDeltaStrategy implements DeltaStrategy {
                 opposite.quantifier(),
                 opposite.polarity()
         );
-        log.info("---> domBefore={}", domBefore);
-        log.info("---> oppBefore={}", oppBefore);
-        // 3️⃣ 计算 delta（方向很重要）
-        double stepDominant = deltaComputer.computeStep(domBefore.confidence());
-        double stepOppose = deltaComputer.computeStep(oppBefore.confidence());
 
-        double dominantAfter = clamp(domBefore.confidence() - stepDominant);
-        double opposeAfter = clamp(oppBefore.confidence() + stepOppose);
+        // 2️⃣ 计算 step
+        double domStep = deltaComputer.computeStep(domBefore.confidence());
+        double oppStep = deltaComputer.computeStep(oppBefore.confidence());
 
-        // 4️⃣ 写回 Neo4j（一次事务，原子性）
-        writeOpposeUpdate(userId, dominant, dominantAfter, opposite, opposeAfter);
+        // 3️⃣ 计算 after（一次！）
+        double domAfter = clamp(domBefore.confidence() - domStep);
+        double oppAfter = clamp(oppBefore.confidence() + oppStep);
 
-        // 5️⃣ 产出 ClaimDelta（这是 pipeline 的“产品”）
-        ClaimDelta dominantDelta = new ClaimDelta(
-                keyCodec.buildEvidenceKey(domBefore),
-                domBefore.confidence(),
-                dominantAfter,
-                stepDominant,
-                DeltaDirection.DOWN);
+        // 4️⃣ 只返回 delta，不写库
+        return List.of(
+                ClaimDelta.confidenceOnly(
+                        Citation.from(domBefore),
+                        domBefore.confidence(),
+                        domAfter
+                ),
+                ClaimDelta.confidenceOnly(
+                        Citation.from(oppBefore),
+                        oppBefore.confidence(),
+                        oppAfter
+                )
+        );
+    }
 
-        ClaimDelta oppositeDelta = new ClaimDelta(
-                keyCodec.buildEvidenceKey(oppBefore),
-                oppBefore.confidence(),
-                opposeAfter,
-                stepOppose,
-                DeltaDirection.UP);
-
-        return List.of(dominantDelta, oppositeDelta);
+    @Override
+    public double clamp(double v) {
+        return Math.max(0.0, Math.min(1.0, v));
     }
 
 

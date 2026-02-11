@@ -111,6 +111,7 @@ public class ClaimRepository {
                 Source.valueOf(c.get("source").asString()),
                 c.get("batch").asString(),
                 c.get("updatedAt").asZonedDateTime().toInstant(),
+                c.get("lastStatusChangedAt").asZonedDateTime().toInstant(),
                 c.get("priority").asInt()
         );
     }

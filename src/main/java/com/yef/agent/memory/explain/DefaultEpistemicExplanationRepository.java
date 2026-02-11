@@ -2,7 +2,9 @@ package com.yef.agent.memory.explain;
 
 import com.yef.agent.memory.explain.biz.EpistemicExplanationRepository;
 import com.yef.agent.memory.explain.biz.StatusTransitionExplanationRepository;
-import com.yef.agent.memory.selector.DecisionReason;
+import com.yef.agent.memory.decision.DecisionReason;
+import com.yef.agent.memory.vo.OverriddenEdgeVO;
+import com.yef.agent.repository.ClaimEvidenceRepository;
 import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.List;
@@ -10,20 +12,22 @@ import java.util.List;
 @Component
 public class DefaultEpistemicExplanationRepository implements EpistemicExplanationRepository {
 
-    private StatusTransitionExplanationRepository transitionRepo;
+    private final StatusTransitionExplanationRepository transitionRepo;
+    private final ClaimEvidenceRepository claimEvidenceRepository;
 
-    public DefaultEpistemicExplanationRepository(StatusTransitionExplanationRepository transitionRepo) {
+    public DefaultEpistemicExplanationRepository(StatusTransitionExplanationRepository transitionRepo,
+                                                 ClaimEvidenceRepository claimEvidenceRepository) {
         this.transitionRepo = transitionRepo;
+        this.claimEvidenceRepository = claimEvidenceRepository;
     }
 
 
-    @Override
     public List<ExplanationItem> explainAll(DecisionReason reason) {
 
         // ① 原有 decision reason
         List<ExplanationItem> items = explainDecision(reason);
 
-        // ② 新增：状态迁移解释（可选）
+        //TODO ② 新增：状态迁移解释（可选）
         transitionRepo.findLatestRelevant(null)
                 .map(StatusTransitionExplanationFactory::explain)
                 .ifPresent(items::add);
@@ -110,7 +114,39 @@ public class DefaultEpistemicExplanationRepository implements EpistemicExplanati
                 ));
             }
         }
+
         return list;
+    }
+
+
+    @Override
+    public List<ExplanationItem> explainOverrideHistory(String claimEvidenceId) {
+        List<OverriddenEdgeVO> edges =
+                claimEvidenceRepository.loadOverrideHistory(claimEvidenceId);
+
+        if (edges.isEmpty()) {
+            return List.of();
+        }
+
+        OverriddenEdgeVO latest = edges.get(0);
+
+        String text = switch (latest.reason()) {
+            case "confidence_overcome" ->
+                    "该结论取代了先前的说法，因为新的证据置信度更高。";
+            case "recent_update" ->
+                    "该结论基于更新后的陈述，覆盖了之前的判断。";
+            default ->
+                    "该结论是在综合比较多条相互冲突的陈述后得出的。";
+        };
+
+        return List.of(
+                ExplanationItem.user(
+                        ExplanationType.OVERRIDDEN_REASON,
+                        text,
+                        2,
+                        "override:" + claimEvidenceId
+                )
+        );
     }
 
 

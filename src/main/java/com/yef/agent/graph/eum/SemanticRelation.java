@@ -18,7 +18,7 @@ public enum SemanticRelation {
     OPPOSE,
 
     /**
-     * 语义无法比较 / 不相关
+     * 非声明语义语义 无法比较 / 不相关
      * 例：predicate 不同、object 不同
      */
     NEUTRAL

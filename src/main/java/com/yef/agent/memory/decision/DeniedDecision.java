@@ -1,17 +1,17 @@
-package com.yef.agent.memory.selector;
+package com.yef.agent.memory.decision;
 
 import com.yef.agent.graph.answer.ClaimEvidence;
-import com.yef.agent.memory.selector.biz.DominantDecision;
+import com.yef.agent.memory.decision.biz.DominantDecision;
 import java.util.List;
 import java.util.Optional;
 
 /**
- * 确认成立的裁决
+ * 确认不成立的裁决
  *
  * 例如：
- * - “我拥有特斯拉”
+ * - “我不拥有特斯拉”
  */
-public record ConfirmedDecision(
+public record DeniedDecision(
         ClaimEvidence claim,
         DecisionReason reason
 ) implements DominantDecision {

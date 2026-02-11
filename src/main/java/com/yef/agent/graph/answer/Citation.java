@@ -15,11 +15,6 @@ public record Citation(
 ) {
 
 
-    public Citation toCitation(ClaimEvidence claimEvidence){
-        return null;
-    }
-
-
     public static Citation from(ClaimEvidence evidence) {
         return new Citation(
                 evidence.predicate().name(),

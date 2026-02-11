@@ -1,0 +1,33 @@
+┌──────────────┐
+│   ClaimSlot  │   （五元组）
+└──────┬───────┘
+       │
+       ▼
+┌─────────────────────┐
+│   DominantClaimVO   │
+│  - claimEvidence    │
+│  - confidence       │
+│  - epistemicStatus  │
+│  - dominantSince    │
+└─────────┬───────────┘
+          │
+          ▼
+┌─────────────────────┐
+│   AnswerBuilder     │   ← 决定“说什么”
+│  - yes / no / unsure│
+└─────────┬───────────┘
+          │
+          ▼
+┌─────────────────────┐
+│   NarrativeService  │   ← 决定“怎么说”
+│  - tone             │
+│  - certainty        │
+│  - explanation      │
+└─────────────────────┘
+
+
+Dominant History =
+  最近一次 dominant +
+  它是怎么赢的 +
+  它压倒了谁 +
+  它稳定了多久

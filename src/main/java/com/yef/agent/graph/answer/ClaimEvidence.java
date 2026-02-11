@@ -30,6 +30,9 @@ public record ClaimEvidence(
         String batch,
 
         Instant updatedAt,
+
+        //epistemicStatus最近一次的更新时间
+        Instant lastStatusChangedAt,
         //认知裁决顺序
         int priority
 

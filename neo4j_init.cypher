@@ -18,6 +18,17 @@ CREATE CONSTRAINT evidence_evidenceId IF NOT EXISTS
 FOR (e:Evidence) REQUIRE e.evidenceId IS UNIQUE;
 
 
+CREATE CONSTRAINT ce_id IF NOT EXISTS
+FOR (c:ClaimEvidence)
+REQUIRE c.id IS UNIQUE;
+
+// ClaimEvidence 唯一性
+CREATE CONSTRAINT ce_id_unique IF NOT EXISTS
+FOR (c:ClaimEvidence)
+REQUIRE c.id IS UNIQUE;
+
+
+
 // ===== Indexes (optional but useful) =====
 CREATE INDEX claim_predicate IF NOT EXISTS
 FOR (c:Claim) ON (c.predicate);
@@ -25,6 +36,14 @@ FOR (c:Claim) ON (c.predicate);
 CREATE INDEX claim_subject IF NOT EXISTS
 FOR (c:Claim) ON (c.subjectId);
 
+CREATE INDEX dom_slot IF NOT EXISTS
+FOR ()-[r:DOMINANT]-()
+ON (r.claimKey);
+
+// 每个 slot 只能有一个 DOMINANT
+CREATE CONSTRAINT dominant_unique IF NOT EXISTS
+FOR ()-[r:DOMINANT]-()
+REQUIRE r.slot IS UNIQUE;
 
 // ===== Seed Concepts =====
 MERGE (:Concept {name:"ANY_CAR"});

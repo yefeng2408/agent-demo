@@ -2,10 +2,7 @@ package com.yef.agent.graph;
 
 import com.yef.agent.graph.answer.Citation;
 import com.yef.agent.graph.answer.ClaimEvidence;
-import com.yef.agent.graph.eum.ClaimGeneration;
-import com.yef.agent.graph.eum.PredicateType;
-import com.yef.agent.graph.eum.Quantifier;
-import com.yef.agent.graph.eum.Source;
+import com.yef.agent.graph.eum.*;
 
 
 // Claim Semantic Key（语义主键）
@@ -20,6 +17,7 @@ public record ExtractedRelation(
         double confidence,    // 0.0 ~ 1.0（语言确定性，不是事实真值）
 
         Source source,         // USER_STATEMENT / SELF_CORRECTION / QUESTION
+
         ClaimGeneration generation
 ) {
 
@@ -29,24 +27,6 @@ public record ExtractedRelation(
     }
 
 
-    public static ExtractedRelation fromEvidence(ClaimEvidence e, Source source) {
-        return new ExtractedRelation(
-                e.subjectId(),
-                e.predicate(),
-                e.objectId(),
-                e.quantifier(),
-                e.polarity(),
-                normalizeConfidence(e.confidence()),
-                source,
-                ClaimGeneration.V3
-
-        );
-    }
-
-    private static double normalizeConfidence(double raw) {
-        // 回答产生的新认知：永远 ≤ 原始证据
-        return Math.min(raw, 0.7);
-    }
 
     public String toReadableText() {
         String subject = subjectId;
@@ -80,7 +60,7 @@ public record ExtractedRelation(
                 polarity,
                 0.5,                      // ✅ 默认初始置信度
                 Source.USER_STATEMENT,    // ✅ 来自用户声明
-                ClaimGeneration.V3        // ✅ v3 认知系统
+                ClaimGeneration.V3       // ✅ v3 认知系统
         );
     }
 

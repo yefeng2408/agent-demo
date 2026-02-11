@@ -1,13 +1,16 @@
 package com.yef.agent.graph.answer;
 
+import com.yef.agent.component.KeyCodec;
 import com.yef.agent.graph.ExtractedRelation;
 import com.yef.agent.graph.eum.PredicateType;
 import com.yef.agent.graph.eum.Quantifier;
 import com.yef.agent.graph.eum.Source;
 import com.yef.agent.memory.EpistemicStatus;
 import com.yef.agent.memory.explain.biz.ExplainableAnswerBuilder;
-import com.yef.agent.memory.selector.biz.DominantClaimSelector;
-import com.yef.agent.memory.selector.biz.DominantDecision;
+import com.yef.agent.memory.decision.biz.DominantClaimSelector;
+import com.yef.agent.memory.decision.biz.DominantDecision;
+import com.yef.agent.memory.vo.DominantClaimVO;
+import com.yef.agent.service.DominantService;
 import org.neo4j.driver.*;
 import org.neo4j.driver.Record;
 import org.springframework.stereotype.Component;
@@ -29,14 +32,21 @@ public class Neo4jGraphAnswerer implements GraphAnswerer {
     //该数值越小，查询到的claim越多。仲裁阶段的可解释性越强
     private static final double MIN_CONF = 0.2;
 
+    private final KeyCodec keyCodec;
     private final DominantClaimSelector dominantClaimSelector;
     private final ExplainableAnswerBuilder explainableAnswerBuilder;
+    private final DominantService dominantService;
 
     public Neo4jGraphAnswerer(Driver driver,
-                              DominantClaimSelector dominantClaimSelector, ExplainableAnswerBuilder explainableAnswerBuilder) {
+                              KeyCodec keyCodec,
+                              DominantClaimSelector dominantClaimSelector,
+                              ExplainableAnswerBuilder explainableAnswerBuilder,
+                              DominantService dominantService) {
         Neo4jGraphAnswerer.driver = driver;
+        this.keyCodec = keyCodec;
         this.dominantClaimSelector = dominantClaimSelector;
         this.explainableAnswerBuilder = explainableAnswerBuilder;
+        this.dominantService = dominantService;
     }
 
     @Override
@@ -57,12 +67,13 @@ public class Neo4jGraphAnswerer implements GraphAnswerer {
         }
         return AnswerResult.unanswered();*/
         // 临时写死，只测 ASK_OWNS
-        return answerOwns(userId);
+        return answerOwns(userId,PredicateType.OWNS);
     }
 
-    private AnswerResult answerOwns(String userId) {
+
+    private AnswerResult answerOwns(String userId,PredicateType predicate) {
         // 1) 召回：OWNS 的所有候选（不丢证据）
-        List<ClaimEvidence> candidates = queryClaims(userId, PredicateType.OWNS);
+        List<ClaimEvidence> candidates = queryClaims(userId, predicate);
         if (candidates == null || candidates.isEmpty()) {
             return AnswerResult.unanswered();
         }
@@ -76,75 +87,6 @@ public class Neo4jGraphAnswerer implements GraphAnswerer {
                         candidates);
         return result;
     }
-
-
-    /**
-     * NAME / BORN_YEAR / HAS_ROLE 这类：ONE + polarity=true 的单值事实
-     */
-  /*  private AnswerResult answerSingleValue(String userId,
-                                           PredicateType predicate,
-                                           String objectPrefix,
-                                           String template) {
-
-        List<ClaimEvidence> evidences = queryClaims(userId, predicate);
-        ClaimEvidence top = evidences.get(0);
-        // 先找 polarity=true 的最高置信度
-        Optional<ClaimEvidence> best = evidences.stream()
-                .filter(e -> e.polarity())
-                .filter(e -> e.confidence() >= MIN_CONF)
-                .max(Comparator.comparingDouble(e -> e.confidence()));
-
-        if (best.isEmpty()) return AnswerResult.unanswered();
-
-        List<Citation> citations = toCitations(evidences);
-
-        String objectId = evidences.get(0).objectId(); // e.g. NAME:叶丰
-        String value = stripPrefix(objectId, objectPrefix);
-        ExtractedRelation relation = ExtractedRelation.fromEvidence(top, Source.QUESTION);
-        return AnswerResult.ok(String.format(template, value), relation, citations, null);
-    }*/
-
-    /**
-     * 临时测试方法  OWNS：优先 ANY 的否定，再找具体肯定
-     */
-   /* private AnswerResult answerOwnsCar(String userId) {
-        List<ClaimEvidence> evidences = queryClaims(userId, PredicateType.OWNS);
-        ClaimEvidence top = evidences.get(0);
-
-        // 1) ANY 且否定：我没有任何车
-        Optional<ClaimEvidence> deniedAny = evidences.stream()
-                .filter(e -> "ANY".equalsIgnoreCase(e.quantifier().name()))
-                .filter(e -> !e.polarity())
-                .filter(e -> e.confidence() >= MIN_CONF)
-                .max(Comparator.comparingDouble(r -> r.confidence()));
-
-        ExtractedRelation relation = ExtractedRelation.fromEvidence(top, Source.QUESTION);
-        List<Citation> citations = toCitations(evidences);
-
-        if (deniedAny.isPresent()) {
-            return AnswerResult.ok("我目前没有任何汽车。", relation, citations, null);
-        }
-        // 2) 找具体肯定（例如 BRAND:Tesla / CAR:xxx）
-        Optional<ClaimEvidence> bestPositive = evidences.stream()
-                .filter(e -> e.polarity())
-                .filter(e -> e.confidence() >= MIN_CONF)
-                .max(Comparator.comparingDouble(e -> e.confidence()));
-
-        if (bestPositive.isPresent()) {
-            String objectId = bestPositive.get().objectId();
-            return AnswerResult.ok("我有车（相关对象：" + objectId + "）。", relation, citations, null);
-        }
-
-        // 3) 有具体否定但没有 ANY（比如否定特斯拉，但不代表没车）
-        boolean deniedSome = evidences.stream()
-                .anyMatch(e -> !e.polarity() && e.confidence() >= MIN_CONF);
-
-        if (deniedSome) {
-            return AnswerResult.ok("我能确定我不拥有其中某些车（例如特定品牌），但是否有车需要更多信息。", relation, citations, null);
-        }
-        return AnswerResult.unanswered();
-    }*/
-
 
     public static List<ClaimEvidence> queryClaims(String userId, PredicateType predicate) {
         String cypher = """
@@ -172,6 +114,7 @@ public class Neo4jGraphAnswerer implements GraphAnswerer {
                   c.source     AS source,
                   c.batch      AS batch,
                   c.updatedAt  AS updatedAt,
+                  c.lastStatusChangedAt  AS lastStatusChangedAt,
                   pri          AS priority
                 ORDER BY pri ASC, c.confidence DESC, c.updatedAt DESC
                 """;
@@ -187,13 +130,14 @@ public class Neo4jGraphAnswerer implements GraphAnswerer {
                             record.get("objectId").asString(),
                             Quantifier.valueOf(record.get("quantifier").asString()),
                             record.get("polarity").asBoolean(),
-                            //EpistemicStatus.valueOf(record.get("epistemicStatus").asString()),
                             EpistemicStatus.fromGraph(record.get("epistemicStatus").asString()),
                             record.get("confidence").asDouble(),
                             parseSource(record),
                             record.get("batch").isNull() ? null : record.get("batch").asString(),
                             record.get("updatedAt").isNull() ? null
                                     : record.get("updatedAt").asZonedDateTime().toInstant(),
+                            record.get("lastStatusChangedAt").isNull() ? null
+                                    : record.get("lastStatusChangedAt").asZonedDateTime().toInstant(),
                             record.get("priority").asInt()
                     ))
             );
@@ -238,6 +182,28 @@ public class Neo4jGraphAnswerer implements GraphAnswerer {
             default -> Source.SYSTEM; // 兜底，防脏数据
         };
     }
+
+
+
+    @Override
+    public AnswerResult answerByRelation(String userId, ExtractedRelation relation) {
+        String claimKey = keyCodec.buildExtractRelKey(relation);
+
+        Optional<DominantClaimVO> domOpt = dominantService.loadDominantView(userId, claimKey);
+
+        if (domOpt.isEmpty()) {
+            return AnswerResult.unanswered();
+        }
+
+        DominantClaimVO dom = domOpt.get();
+
+        return explainableAnswerBuilder.build(
+                userId,
+                relation,
+                dom
+        );
+    }
+
 
 
 }
