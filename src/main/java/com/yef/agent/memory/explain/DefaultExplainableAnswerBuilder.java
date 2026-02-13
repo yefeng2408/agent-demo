@@ -10,14 +10,13 @@ import com.yef.agent.memory.explain.biz.EpistemicExplanationRepository;
 import com.yef.agent.memory.explain.biz.ExplainableAnswerBuilder;
 import com.yef.agent.memory.decision.*;
 import com.yef.agent.memory.decision.biz.DominantDecision;
-import com.yef.agent.memory.narrative.DominantNarrativeScore;
+import com.yef.agent.memory.narrative.NarrativeCondition;
 import com.yef.agent.memory.narrative.NarrativeTone;
+import com.yef.agent.memory.narrative.NarrativeDecision;
 import com.yef.agent.memory.narrative.service.NarrativeService;
 import com.yef.agent.memory.vo.DominantClaimVO;
-import org.checkerframework.checker.units.qual.A;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
-
 import java.util.List;
 
 @Component
@@ -105,28 +104,82 @@ public class DefaultExplainableAnswerBuilder
         );
     }
 
-    @Override
+ /*   @Override
     public AnswerResult build(String userId, ExtractedRelation r, DominantClaimVO dom) {
 
-        // ① 事实核心（不带语气）
+        // ① 核心事实（ExplainableAnswer 的“无语气事实骨架”）
         String core = renderFact(dom.claim());
 
-        // ② 叙事评分
-        DominantNarrativeScore score = narrativeService.buildScore(dom);
+        // ② NarrativeDecision（统一决策入口）
+        NarrativeDecision decision = narrativeService.decide(userId, dom);
 
-        NarrativeTone tone = narrativeService.decideTone(score);
-        // ③ 包装语气
-        String finalAnswer = narrativeService.renderWithTone(tone, core);
+        NarrativeTone tone = decision.tone();
+        NarrativeCondition condition = decision.condition();
 
-        return AnswerResult.ok(
+        // ③ 根据 Decision 组装 Narrative 前缀/后缀
+        StringBuilder answer = new StringBuilder();
+
+        // ---------- (A) recently changed cue ----------
+        if (decision.includeRecentlyChangedCue()) {
+            answer.append("根据最新记录，");
+        }
+
+        // ---------- (B) ownership cue ----------
+        if (decision.includeOwnershipCue()) {
+            answer.append("目前信息显示，");
+        }
+
+        // ---------- (C) contested cue ----------
+        if (decision.includeContestedCue()) {
+            answer.append("这一点仍存在争议，");
+        }
+
+        // ---------- (D) uncertainty cue ----------
+        if (decision.includeUncertaintyCue()) {
+            switch (condition) {
+                case TENTATIVE -> answer.append("可能是这样的：");
+                case CONTESTED -> answer.append("不同记录之间存在冲突：");
+                case RECENTLY_CHANGED -> answer.append("刚发生变化：");
+                default -> {}
+            }
+        }
+
+        // ④ Tone 渲染核心句（NarrativeTone 层）
+        String tonedCore = narrativeService.renderWithTone(tone, core);
+        answer.append(tonedCore);
+
+        // ⑤ contested / uncertain 的尾部解释（Explainable 层）
+        if (condition == NarrativeCondition.CONTESTED) {
+
+            answer.append("（该结论近期被新的信息挑战）");
+
+        } else if (condition == NarrativeCondition.RECENTLY_CHANGED) {
+
+            answer.append("（该信息刚刚发生更新）");
+
+        } else if (condition == NarrativeCondition.TENTATIVE) {
+
+            answer.append("（当前置信度仍在变化中）");
+        }
+
+        String finalAnswer = answer.toString();
+
+        // ⑥ Citation 控制（Decision 决定是否给证据）
+        List<Citation> citations =
+                decision.includeCitations()
+                        ? List.of(toCitation(dom.claim()))
+                        : List.of();
+
+        // ⑦ 返回 ExplainableAnswer
+        return AnswerResult.pk(
                 finalAnswer,
-                List.of(toCitation(dom.claim())),
+                citations,
                 tone,
-                score
+                decision.score()
         );
     }
 
-
+*/
     private ExtractedRelation toRelation(ClaimEvidence c) {
         return new ExtractedRelation(
                 c.subjectId(),
@@ -155,6 +208,20 @@ public class DefaultExplainableAnswerBuilder
         );
     }
 
+
+    private String renderFact(ClaimEvidence c) {
+
+        String subject = c.subjectId();
+        String predicate = c.predicate().name().toLowerCase();
+        String object = c.objectId();
+
+        String base = subject + " " + predicate + " " + object;
+
+        if (!c.polarity()) {
+            return "并不存在证据表明 " + base;
+        }
+        return base;
+    }
 
 }
 

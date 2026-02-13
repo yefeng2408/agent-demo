@@ -5,15 +5,25 @@ import com.yef.agent.memory.EpistemicStatus;
 import com.yef.agent.memory.decision.DecisionReason;
 import com.yef.agent.memory.explain.Audience;
 import com.yef.agent.memory.narrative.*;
+import com.yef.agent.memory.narrative.DefaultNarrativeDecisionEngine;
+import com.yef.agent.memory.narrative.NarrativeDecision;
+import com.yef.agent.memory.narrative.repository.NarrativeRepository;
 import com.yef.agent.memory.vo.DominantClaimVO;
 import com.yef.agent.memory.vo.OverriddenEdgeVO;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
-
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 @Component
 public class NarrativeServiceImpl implements NarrativeService {
+
+    private final DefaultNarrativeDecisionEngine decisionEngine = new DefaultNarrativeDecisionEngine();
+
+    @Autowired
+    NarrativeRepository narrativeRepository;
 
     // ========= 1️⃣ 构建叙事评分 =========
     @Override
@@ -21,18 +31,13 @@ public class NarrativeServiceImpl implements NarrativeService {
 
         double confidence = dom.effectiveConfidence();
         long ageMillis = System.currentTimeMillis() - dom.dominantSince().toEpochMilli();
-
-        // 简单年龄换算（分钟）
-        long ageMinutes = ageMillis / 60000;
-
-        boolean recentlyChallenged =
-                dom.overrideCount() > 0 && ageMinutes < 30;
+        Duration dominanceAge = Duration.ofMillis(ageMillis);
 
         return new DominantNarrativeScore(
                 confidence,
-                ageMinutes,
                 dom.status(),
-                recentlyChallenged
+                dominanceAge,
+                dom.recentlyChallenged()
         );
     }
 
@@ -72,19 +77,19 @@ public class NarrativeServiceImpl implements NarrativeService {
 
     @Override
     public NarrativeCondition decideOwnershipTone(NarrativeContext ctx) {
-        if (ctx.getDominant() == null) {
+        if (ctx.dominant() == null) {
             return NarrativeCondition.TENTATIVE;
         }
         // 1. 刚被挑战 / 刚胜出
-        if (ctx.isRecentlyChallenged()) {
+        if (ctx.recentlyChallenged()) {
             return NarrativeCondition.RECENTLY_CHANGED;
         }
         // 2. 有 override 历史（但不是最近）
-        if (!ctx.getOverrideHistory().isEmpty()) {
+        if (!ctx.overrideHistory().isEmpty()) {
             return NarrativeCondition.CONTESTED;
         }
         // 3. dominant 已稳定存在一段时间
-        if (ctx.getDominantDuration().compareTo(STABLE_DURATION) >= 0) {
+        if (ctx.dominantDuration().compareTo(STABLE_DURATION) >= 0) {
             return NarrativeCondition.CERTAIN;
         }
         // 4. 默认：短期 dominant
@@ -92,11 +97,44 @@ public class NarrativeServiceImpl implements NarrativeService {
     }
 
 
+    public NarrativeContext buildNarrativeContext(String userId, String claimKey) {
+        Optional<DominantClaimVO> domOpt = narrativeRepository.loadDominantNarrativeView(userId, claimKey);
+        if (domOpt.isEmpty()) {
+            return new NarrativeContext(null, List.of(), Duration.ZERO, false);
+        }
+
+        DominantClaimVO dom = domOpt.get();
+        List<OverrideEvent> history = narrativeRepository.loadOverrideTimeline(dom.claimKey());
+        Duration duration = Duration.between(dom.dominantSince(), Instant.now());
+
+        boolean recentlyChallenged =
+                history.stream().anyMatch(e ->
+                        Duration.between(e.at(), Instant.now()).toHours() < 24);
+
+        return new NarrativeContext(dom, history, duration, recentlyChallenged);
+    }
+
+
+    //  把 ctx + score 收口成 decision
+    @Override
+    public NarrativeDecision decide(String userId, DominantClaimVO dom) {
+        String claimKey = dom.claimKey();
+
+        // 1) score（更偏“数值快照”）
+        DominantNarrativeScore score = this.buildScore(dom);
+
+        // 2) ctx（更偏“事实上下文”：overrideHistory、dominantDuration...）
+        NarrativeContext ctx = this.buildNarrativeContext(userId, claimKey);
+
+        // 3) decision（真正驱动 builder）
+        return decisionEngine.decide(dom, ctx, score);
+    }
+
+
     @Override
     public String renderOwnershipAnswer(NarrativeTone tone, ClaimEvidence dominant) {
         return "";
     }
-
 
 
     public Narrative buildNarrative(
@@ -161,20 +199,20 @@ public class NarrativeServiceImpl implements NarrativeService {
 
     public NarrativeAnswer ownershipNarrative(NarrativeContext ctx) {
 
-        DominantClaimVO d = ctx.getDominant();
+        DominantClaimVO d = ctx.dominant();
 
         if (d == null) {
             return unsure("目前没有足够信息判断。");
         }
 
-        if (!ctx.getOverrideHistory().isEmpty()) {
+        if (!ctx.overrideHistory().isEmpty()) {
             return cautious(
                     "目前来看你拥有" + d.objectName() +
                             "，这是基于你最近的修正判断得出的。"
             );
         }
 
-        if (ctx.getDominantDuration().toHours() < 6) {
+        if (ctx.dominantDuration().toHours() < 6) {
             return cautious(
                     "现在我认为你拥有" + d.objectName() +
                             "，但这个结论还比较新。"

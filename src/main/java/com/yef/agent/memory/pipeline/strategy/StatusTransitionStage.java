@@ -43,8 +43,7 @@ public class StatusTransitionStage {
         this.keyCodec = keyCodec;
     }
 
-    public void apply(EpistemicContext ctx, List<ClaimDelta> deltas) {
-        String userId = ctx.userId();
+    public void apply(String userId, List<ClaimDelta> deltas) {
         for (ClaimDelta delta : deltas) {
             if (delta.kind() == ClaimDelta.DeltaKind.CONFIDENCE_ONLY) {
                 // ① 只做一件事：写置信度
@@ -59,7 +58,7 @@ public class StatusTransitionStage {
             handleStatusTransition(userId, delta);
         }
         // ③ 统一收口（dominant / override）
-        afterAllDeltasApplied(ctx.userId(), deltas);
+        afterAllDeltasApplied(userId, deltas);
     }
 
 
@@ -99,13 +98,11 @@ public class StatusTransitionStage {
             String challengerKey = challengerDelta.claimKey();
 
             // ========= 4️⃣ 查询当前 slot 所有 evidence =========
-            List<ClaimEvidence> all =
-                    claimEvidenceRepository.loadAllByClaimKey(userId, challengerKey);
+            List<ClaimEvidence> all = claimEvidenceRepository.loadAllByClaimKey(userId, challengerKey);
 
             if (all == null || all.size() < 2) {
                 continue;
             }
-
             // ========= 5️⃣ 重新计算 dominant =========
             ClaimEvidence newDominant = all.stream()
                     .max(Comparator.comparingDouble(ClaimEvidence::confidence))
@@ -116,7 +113,6 @@ public class StatusTransitionStage {
             }
 
             String claimSlotKey = slotKeyOf(challengerKey);
-
             // ========= 6️⃣ 写 Neo4j DOMINANT =========
             // 清理旧 dominant
             claimEvidenceRepository.clearDominant(userId, claimSlotKey);

@@ -9,6 +9,7 @@ import com.yef.agent.graph.eum.SourceAdapter;
 import com.yef.agent.memory.EpistemicStatus;
 import com.yef.agent.memory.narrative.OverrideEvent;
 import com.yef.agent.memory.vo.DominantClaimVO;
+import com.yef.agent.memory.vo.DominantSnapshot;
 import com.yef.agent.memory.vo.OverriddenEdgeVO;
 import com.yef.agent.repository.ClaimEvidenceRepository;
 import lombok.extern.slf4j.Slf4j;
@@ -17,9 +18,12 @@ import org.neo4j.driver.Driver;
 import org.neo4j.driver.Record;
 import org.neo4j.driver.Session;
 import org.springframework.stereotype.Component;
+
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+
 import static org.neo4j.driver.Values.parameters;
 
 @Slf4j
@@ -333,25 +337,29 @@ public class ClaimEvidenceRepositoryImpl implements ClaimEvidenceRepository {
      * 查询当前 dominant（回答阶段用）
      */
     @Override
-    public Optional<ClaimEvidence> loadDominant(String userId, String claimKey) {
+    public Optional<DominantSnapshot> loadDominant(String userId, String claimKey) {
         String cypher = """
-                        MATCH (u:User {id:$uid})
-                                MATCH (slot:ClaimSlot {key:$slot})
-                                MATCH (slot)-[:DOMINANT]->(c:ClaimEvidence)
-                                RETURN
-                                  c.id            AS id,
-                                  c.subjectId     AS subjectId,
-                                  c.predicate     AS predicate,
-                                  c.objectId      AS objectId,
-                                  c.quantifier    AS quantifier,
-                                  c.polarity      AS polarity,
-                                  c.epistemicStatus AS epistemicStatus,
-                                  c.confidence    AS confidence,
-                                  c.source        AS source,
-                                  c.batch         AS batch,
-                                  c.updatedAt     AS updatedAt,
-                                  c.lastStatusChangedAt AS lastStatusChangedAt,
-                                  c.priority      AS priority
+                MATCH (u:User {id:$uid})
+                MATCH (slot:ClaimSlot {key:$slot})
+                MATCH (slot)-[d:DOMINANT]->(c:ClaimEvidence)
+                
+                RETURN
+                    c.id AS id,
+                    c.subjectId AS subjectId,
+                    c.predicate AS predicate,
+                    c.objectId AS objectId,
+                    c.quantifier AS quantifier,
+                    c.polarity AS polarity,
+                    c.epistemicStatus AS epistemicStatus,
+                    c.confidence AS confidence,
+                    c.source AS source,
+                    c.batch AS batch,
+                    c.updatedAt AS updatedAt,
+                    c.lastStatusChangedAt AS lastStatusChangedAt,
+                    c.priority AS priority,
+                
+                    d.since AS dominantSince,
+                    d.supportConfidenceAt AS supportConfidenceAt
                 """;
         try (Session session = driver.session()) {
             return session.executeRead(tx ->
@@ -359,41 +367,13 @@ public class ClaimEvidenceRepositoryImpl implements ClaimEvidenceRepository {
                             "uid", userId,
                             "slot", claimKey
                     )).list().stream().findFirst()
-            ).map(this::mapToClaimEvidence);
+            ).map(this::mapToDominant);
         }
     }
 
-    @Override
-    public Optional<DominantClaimVO> loadDominant2(String userId, String claimKey) {
-        KeyCodec.DecodedKey k = keyCodec.decode(claimKey);
-        String cypher = """
-                    MATCH (u:User {id:$uid})-[:ASSERTS]->(c:Claim)
-                    MATCH (c)-[d:DOMINANT]->(:Dominant)
-                    WHERE
-                      c.subjectId = $sid AND
-                      c.predicate = $pred AND
-                      c.objectId  = $oid AND
-                      c.quantifier = $q
-                    RETURN c, d.since AS since, d.supportConfidenceAt AS sca, d.reason AS reason
-                    LIMIT 1
-                """;
+    private DominantSnapshot mapToDominant(Record r) {
 
-        try (Session s = driver.session()) {
-            return s.executeRead(tx ->
-                    tx.run(cypher, parameters(
-                            "uid", userId,
-                            "sid", k.subjectId(),
-                            "pred", k.predicate().name(),
-                            "oid", k.objectId(),
-                            "q", k.quantifier().name()
-                    )).list().stream().findFirst()
-            ).map(r -> DominantClaimVO.fromRecord(r, keyCodec));
-        }
-    }
-
-
-    private ClaimEvidence mapToClaimEvidence(Record r) {
-        return new ClaimEvidence(
+        ClaimEvidence claim = new ClaimEvidence(
                 r.get("subjectId").asString(),
                 PredicateType.valueOf(r.get("predicate").asString()),
                 r.get("objectId").asString(),
@@ -402,14 +382,22 @@ public class ClaimEvidenceRepositoryImpl implements ClaimEvidenceRepository {
                 EpistemicStatus.valueOf(r.get("epistemicStatus").asString()),
                 r.get("confidence").asDouble(),
                 Source.valueOf(r.get("source").asString()),
-                r.get("batch").isNull() ? null : r.get("batch").asString(),
+                r.get("batch").isNull()? null : r.get("batch").asString(),
                 r.get("updatedAt").asZonedDateTime().toInstant(),
-                r.get("lastStatusChangedAt").isNull()
-                        ? null
-                        : r.get("lastStatusChangedAt").asZonedDateTime().toInstant(),
+                r.get("lastStatusChangedAt").isNull()? null :
+                        r.get("lastStatusChangedAt").asZonedDateTime().toInstant(),
                 r.get("priority").asInt()
         );
+
+        Instant since = r.get("dominantSince").asZonedDateTime().toInstant();
+        double supportConfidence = r.get("supportConfidenceAt").asDouble();
+        return new DominantSnapshot(
+                claim,
+                since,
+                supportConfidence
+        );
     }
+
 
 
     @Override
@@ -436,29 +424,6 @@ public class ClaimEvidenceRepositoryImpl implements ClaimEvidenceRepository {
         }
     }
 
-    @Override
-    public List<OverrideEvent> loadOverrideHistory2(String claimEvidenceId) {
-        String cypher = """
-                    MATCH (old:Claim)-[o:OVERRIDDEN_BY]->(new:Claim)
-                    WHERE new.id = $cid
-                    RETURN old.id AS fromId, new.id AS toId, o.at AS at, o.reason AS reason
-                    ORDER BY o.at DESC
-                    LIMIT 5
-                """;
-        try (Session s = driver.session()) {
-            return s.executeRead(tx ->
-                    tx.run(cypher, parameters("cid", claimEvidenceId))
-                            .list()
-                            .stream()
-                            .map(r -> new OverrideEvent(
-                                    r.get("fromId").asString(),
-                                    r.get("toId").asString(),
-                                    r.get("at").asZonedDateTime().toInstant(),
-                                    r.get("reason").asString()
-                            ))
-                            .toList()
-            );
-        }
-    }
+
 
 }

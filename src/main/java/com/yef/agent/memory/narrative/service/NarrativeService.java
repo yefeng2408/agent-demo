@@ -5,6 +5,7 @@ import com.yef.agent.memory.narrative.DominantNarrativeScore;
 import com.yef.agent.memory.narrative.NarrativeCondition;
 import com.yef.agent.memory.narrative.NarrativeContext;
 import com.yef.agent.memory.narrative.NarrativeTone;
+import com.yef.agent.memory.narrative.NarrativeDecision;
 import com.yef.agent.memory.vo.DominantClaimVO;
 
 /**
@@ -20,6 +21,9 @@ public interface NarrativeService {
 
 
     NarrativeCondition decideOwnershipTone(NarrativeContext ctx);
+
+
+    NarrativeDecision decide(String userId, DominantClaimVO dom);
 
     String renderOwnershipAnswer(
             NarrativeTone tone,

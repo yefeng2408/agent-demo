@@ -46,5 +46,21 @@ public record AnswerResult(
                 );
     }
 
+    public static AnswerResult pk(
+            String text,
+            List<Citation> citations,
+            NarrativeTone tone,
+            DominantNarrativeScore score
+    ) {
+        return new AnswerResult(
+                true,
+                text,
+                null,     // relation 暂无
+                citations,
+                null,     // explanation 暂无
+                null      // decision 暂无
+        );
+    }
+
 
 }

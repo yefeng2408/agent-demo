@@ -4,12 +4,16 @@ import com.yef.agent.graph.eum.PredicateType;
 import com.yef.agent.graph.eum.Quantifier;
 import com.yef.agent.graph.eum.Source;
 import com.yef.agent.memory.EpistemicStatus;
+import org.neo4j.driver.types.Node;
+
 import java.time.Instant;
 
 /**
- *  claim证据对象
+ * claim证据对象
  */
 public record ClaimEvidence(
+
+        String elementId,   // ← graph identity
         //subjectId
         String subjectId,
         //谓语
@@ -38,5 +42,56 @@ public record ClaimEvidence(
 
 ) {
 
-  
+
+    public static ClaimEvidence fromNode(Node node) {
+
+        // ===== graph identity =====
+        String elementId = node.elementId();
+
+        // ===== 五元组 =====
+        String subjectId = node.get("subjectId").asString();
+        PredicateType predicate = PredicateType.valueOf(node.get("predicate").asString());
+        String objectId = node.get("objectId").asString();
+        Quantifier qualifier = Quantifier.valueOf(node.get("qualifier").asString());
+        boolean polarity = node.get("polarity").asBoolean();
+
+        // ===== 置信度 =====
+        double confidence = node.get("confidence").asDouble();
+
+        // ===== 来源 =====
+        Source source = Source.valueOf(node.get("source").asString());
+
+        String batch = node.get("batch").asString();
+
+        // ===== 状态 =====
+        EpistemicStatus status = EpistemicStatus.valueOf(node.get("epistemicStatus").asString());
+
+        // ===== 时间 =====
+        Instant updatedAt = node.get("updatedAt").asZonedDateTime().toInstant();
+
+        Instant lastStatusChangedAt =
+                node.get("lastStatusChangedAt").isNull()
+                        ? null
+                        : node.get("lastStatusChangedAt")
+                        .asZonedDateTime()
+                        .toInstant();
+
+        int priority = node.get("priority").asInt();
+
+        return new ClaimEvidence(
+                elementId,
+                subjectId,
+                predicate,
+                objectId,
+                qualifier,
+                polarity,
+                status,
+                confidence,
+                source,
+                batch,
+                updatedAt,
+                lastStatusChangedAt,
+                priority
+        );
+    }
 }

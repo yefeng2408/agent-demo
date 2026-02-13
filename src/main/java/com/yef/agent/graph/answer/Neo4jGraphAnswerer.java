@@ -9,6 +9,7 @@ import com.yef.agent.memory.EpistemicStatus;
 import com.yef.agent.memory.explain.biz.ExplainableAnswerBuilder;
 import com.yef.agent.memory.decision.biz.DominantClaimSelector;
 import com.yef.agent.memory.decision.biz.DominantDecision;
+import com.yef.agent.memory.narrative.build.NarrativeAnswerBuilder;
 import com.yef.agent.memory.vo.DominantClaimVO;
 import com.yef.agent.service.DominantService;
 import org.neo4j.driver.*;
@@ -35,17 +36,19 @@ public class Neo4jGraphAnswerer implements GraphAnswerer {
     private final KeyCodec keyCodec;
     private final DominantClaimSelector dominantClaimSelector;
     private final ExplainableAnswerBuilder explainableAnswerBuilder;
+    private final NarrativeAnswerBuilder narrativeAnswerBuilder;
     private final DominantService dominantService;
 
     public Neo4jGraphAnswerer(Driver driver,
                               KeyCodec keyCodec,
                               DominantClaimSelector dominantClaimSelector,
-                              ExplainableAnswerBuilder explainableAnswerBuilder,
+                              ExplainableAnswerBuilder explainableAnswerBuilder, NarrativeAnswerBuilder narrativeAnswerBuilder,
                               DominantService dominantService) {
         Neo4jGraphAnswerer.driver = driver;
         this.keyCodec = keyCodec;
         this.dominantClaimSelector = dominantClaimSelector;
         this.explainableAnswerBuilder = explainableAnswerBuilder;
+        this.narrativeAnswerBuilder = narrativeAnswerBuilder;
         this.dominantService = dominantService;
     }
 
@@ -125,6 +128,7 @@ public class Neo4jGraphAnswerer implements GraphAnswerer {
                             "pred", predicate.name(),
                             "minConf", MIN_CONF
                     )).list(record -> new ClaimEvidence(
+                            record.get("elementId").asString(),
                             record.get("subjectId").asString(),
                             PredicateType.valueOf(record.get("predicate").asString()),
                             record.get("objectId").asString(),
@@ -134,10 +138,12 @@ public class Neo4jGraphAnswerer implements GraphAnswerer {
                             record.get("confidence").asDouble(),
                             parseSource(record),
                             record.get("batch").isNull() ? null : record.get("batch").asString(),
+
                             record.get("updatedAt").isNull() ? null
                                     : record.get("updatedAt").asZonedDateTime().toInstant(),
                             record.get("lastStatusChangedAt").isNull() ? null
                                     : record.get("lastStatusChangedAt").asZonedDateTime().toInstant(),
+
                             record.get("priority").asInt()
                     ))
             );
@@ -194,13 +200,21 @@ public class Neo4jGraphAnswerer implements GraphAnswerer {
         if (domOpt.isEmpty()) {
             return AnswerResult.unanswered();
         }
-
-        DominantClaimVO dom = domOpt.get();
-
-        return explainableAnswerBuilder.build(
+        /*
+         * ExplainableAnswerBuilder.build
+         *     ↓
+         * NarrativeService.decide(...)
+         *     ↓
+         * DefaultNarrativeDecisionEngine
+         *     ↓
+         * NarrativeDecision
+         *     ↓
+         * Builder.render()
+         */
+        return narrativeAnswerBuilder.build(
                 userId,
                 relation,
-                dom
+                domOpt.get()
         );
     }
 

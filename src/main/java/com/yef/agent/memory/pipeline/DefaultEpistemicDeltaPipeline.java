@@ -58,7 +58,7 @@ public class DefaultEpistemicDeltaPipeline implements EpistemicDeltaPipeline {
         List<ClaimDelta> deltas = strategy.apply(ctx);
 
         // 3. 状态迁移
-        statusStage.apply(ctx, deltas);
+        statusStage.apply(ctx.userId(), deltas);
 
         // 4. 路由事件工厂（不再关心 SUPPORT / OPPOSE）
         EpistemicEventFactory factory = eventRouter.route(ctx);

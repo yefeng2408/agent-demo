@@ -25,8 +25,6 @@ public record EpistemicContext(
 
         String userId,
 
-        AnswerResult result,
-
         // 被挑战的既有主张
         Citation dominant,
 
@@ -63,7 +61,6 @@ public record EpistemicContext(
 
         return new EpistemicContext(
                 userId,
-                answer,
                 dominant,  // was challenged
                 extracted, // challenger
                 opposite,

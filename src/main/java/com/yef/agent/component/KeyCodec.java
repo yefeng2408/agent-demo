@@ -61,6 +61,35 @@ public class KeyCodec {
             String objectId,
             Quantifier quantifier,
             boolean polarity
-    ) {}
+    ) {
+    }
+
+
+    /**
+     * 根据claimKey 生成slotKey
+     *
+     * @param claimKey
+     * @return
+     */
+    public String slotKeyOfByClaimKey(String claimKey) {
+        KeyCodec.DecodedKey k = this.decode(claimKey);
+        return k.subjectId()
+                + "|" + k.predicate().name()
+                + "|" + k.objectId()
+                + "|" + k.quantifier().name();
+    }
+
+
+    /**
+     * 根据4要素形成slotKey=s+p+o+q
+     */
+    public String buildSlotKey(String subjectId,
+                               PredicateType predicate,
+                               String objectId,
+                               Quantifier quantifier) {
+
+        return subjectId + "|" + predicate.name() + "|" + objectId + "|" + quantifier.name();
+    }
+
 
 }

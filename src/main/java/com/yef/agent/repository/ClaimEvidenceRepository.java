@@ -6,6 +6,7 @@ import com.yef.agent.graph.eum.Quantifier;
 import com.yef.agent.memory.EpistemicStatus;
 import com.yef.agent.memory.narrative.OverrideEvent;
 import com.yef.agent.memory.vo.DominantClaimVO;
+import com.yef.agent.memory.vo.DominantSnapshot;
 import com.yef.agent.memory.vo.OverriddenEdgeVO;
 import java.util.List;
 import java.util.Optional;
@@ -50,14 +51,12 @@ public interface ClaimEvidenceRepository {
             String reason);
 
 
-    Optional<ClaimEvidence> loadDominant(String userId, String claimKey);
+    Optional<DominantSnapshot> loadDominant(String userId, String claimKey);
 
-    Optional<DominantClaimVO> loadDominant2(String userId, String claimKey);
 
 
     List<OverriddenEdgeVO> loadOverrideHistory(String claimEvidenceId);
 
 
-    List<OverrideEvent> loadOverrideHistory2(String claimEvidenceId);
 
 }

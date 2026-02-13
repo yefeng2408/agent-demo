@@ -6,6 +6,7 @@ import com.yef.agent.graph.answer.ClaimEvidence;
 import com.yef.agent.memory.ClaimDelta;
 import com.yef.agent.memory.pipeline.EpistemicContext;
 import com.yef.agent.memory.vo.DominantClaimVO;
+import com.yef.agent.memory.vo.DominantSnapshot;
 import com.yef.agent.repository.ClaimEvidenceRepository;
 import com.yef.agent.service.DominantService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -112,23 +113,18 @@ public class DominantServiceImpl implements DominantService {
     @Override
     public Optional<DominantClaimVO> loadDominantView(String userId, String claimKey) {
 
-        Optional<ClaimEvidence> domOpt =
-                claimEvidenceRepository.loadDominant(userId, claimKey);
-
-        if (domOpt.isEmpty()) {
+        Optional<DominantSnapshot> dominantSnapshot = claimEvidenceRepository.loadDominant(userId, claimKey);
+        if (dominantSnapshot.isEmpty()) {
             return Optional.empty();
         }
 
-        ClaimEvidence dom = domOpt.get();
+        Instant dominantSince = dominantSnapshot.get().dominantSince();
+        Duration age = Duration.between(dominantSince, Instant.now());
 
-        Instant since = dom.dominantSince();
-        Duration age = Duration.between(since, Instant.now());
+        double decay = Math.exp(-age.toHours() / 72.0); // 3 天半衰
+        double effective = dominantSnapshot.get().supportConfidenceAt() * decay;
 
-        double decay =
-                Math.exp(-age.toHours() / 72.0); // 3 天半衰
-
-        double effective = dom.supportConfidenceAt() * decay;
-
+        ClaimEvidence dom = dominantSnapshot.get().claim();
         boolean recentlyChallenged =
                 dom.lastStatusChangedAt() != null &&
                         Duration.between(dom.lastStatusChangedAt(), Instant.now())
@@ -140,7 +136,7 @@ public class DominantServiceImpl implements DominantService {
                         dom,
                         dom.confidence(),
                         effective,
-                        since,
+                        dominantSince,
                         age,
                         dom.epistemicStatus(),
                         recentlyChallenged
