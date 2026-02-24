@@ -22,8 +22,8 @@ RUN ./mvnw -B -DskipTests clean package
 # =========================================
 # Stage 3 — runtime: Distroless 运行层
 # =========================================
-FROM gcr.io/distroless/java21-debian12:nonroot
-
+#FROM gcr.io/distroless/java21-debian12:nonroot
+FROM eclipse-temurin:21-jre
 WORKDIR /app
 
 # 复制 jar（如果 target 里会产出多个 jar，建议改成精确文件名）
