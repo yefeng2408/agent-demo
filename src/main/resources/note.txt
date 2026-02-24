@@ -1,0 +1,87 @@
+AnswerResult
+   │
+   ▼
+EpistemicContext
+   │
+   ▼
+EpistemicDeltaPipeline
+   │
+   ├─▶ SupportDeltaStrategy
+   │      └─ produce ClaimDelta(s)
+   │
+   ├─▶ OpposeDeltaStrategy
+   │      └─ produce ClaimDelta(s)
+   │
+   ├─▶ StatusTransitionStage
+   │      └─ maybeTransitionStatus(claim)
+   │
+   └─▶ EpistemicEventPersistenceStage
+          └─ persist SupportEvent / OpposeEvent
+
+
+
+某个 claim 的状态演化路径（按时间）cypher：
+MATCH (u:User {id:$uid})-[:HAS_TRANSITION]->(t:StatusTransition {claimKey:$claimKey})
+RETURN t
+ORDER BY t.at ASC
+
+画“链路图”（t 节点串起来）
+MATCH (u:User {id:$uid})-[:HAS_TRANSITION]->(t:StatusTransition {claimKey:$claimKey})
+WITH t ORDER BY t.at ASC
+WITH collect(t) AS ts
+UNWIND range(0, size(ts)-2) AS i
+WITH ts[i] AS a, ts[i+1] AS b
+MERGE (a)-[:NEXT]->(b)
+RETURN a,b
+
+用户最近 50 次状态变化总览（用于 demo）
+MATCH (u:User {id:$uid})-[:HAS_TRANSITION]->(t:StatusTransition)
+RETURN t.claimKey, t.from, t.to, t.beforeConf, t.afterConf, t.direction, t.at
+ORDER BY t.at DESC
+LIMIT 50
+
+
+删除userId以及指向claim
+MATCH (u:User {id:"demo-user13"})
+OPTIONAL MATCH (u)-[]-(c:Claim)
+DETACH DELETE u, c;
+
+
+删除所有userId以及指向的claim节点
+MATCH (n {generation:"V3"})
+DETACH DELETE n;
+
+
+删除单个节点solt
+MATCH (n:ClaimSlot {key:"demo-user5|OWNS|BRAND:Tesla|ONE"})
+DETACH DELETE n;
+
+
+删除所有的solt
+MATCH (n:ClaimSlot)
+DETACH DELETE n;
+
+
+
+                                        公网IP
+                                           ↓
+                                        Nginx（80/443）
+                                           ↓
+                                        Agent SpringBoot (Docker)
+                                           ↓
+                                        Neo4j (Docker)
+
+                                        #服务器内打包
+                                        cd ~/agent-stack
+                                        git pull
+                                        mvn clean package -DskipTests
+                                        sudo docker compose up -d --build
+
+//清空所有节点
+CALL apoc.periodic.iterate(
+  "MATCH (n) RETURN n",
+  "DETACH DELETE n",
+  {batchSize:10000}
+);
+
+

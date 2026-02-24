@@ -41,6 +41,11 @@ neo4j/logs/
 neo4j/import/
 neo4j/plugins/
 
+neo4j/data
+milvus
+minio/data
+etcd
+
 minio/data/
 milvus/data/
 etcd/data/
