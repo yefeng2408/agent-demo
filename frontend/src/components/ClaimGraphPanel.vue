@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<!-- <script setup lang="ts">
 
 import { onMounted, onBeforeUnmount, ref, computed } from 'vue'
 import { Network } from 'vis-network'
@@ -313,4 +313,4 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="container" style="height:400px;border:1px solid #ccc;"></div>
-</template>
+</template> -->
