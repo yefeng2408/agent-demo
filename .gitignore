@@ -44,7 +44,13 @@ neo4j/plugins/
 minio/data/
 milvus/data/
 etcd/data/
-
+minio/
+milvus/
+etcd/
+neo4j/
+*.meta
+*.wal
+*.sst
 
 # ===== IDE =====
 .idea/
