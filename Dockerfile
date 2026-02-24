@@ -36,4 +36,5 @@ ENV JAVA_TOOL_OPTIONS="-Xms256m -Xmx768m -XX:MaxMetaspaceSize=256m -Dfile.encodi
 
 # 注意：distroless 的入口点就是 java，所以直接传参
 # profile 建议用环境变量 SPRING_PROFILES_ACTIVE（compose 里配），这里也可写死
-ENTRYPOINT ["/usr/bin/java","-jar","/app/app.jar"]
+#ENTRYPOINT ["/usr/bin/java","-jar","/app/app.jar"]
+ENTRYPOINT ["java","-jar","/app/app.jar"]
