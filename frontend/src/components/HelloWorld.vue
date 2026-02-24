@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Network } from 'vis-network'
+import { DataSet } from 'vis-data'
 import { useAgentStore } from '../store/agentStore'
 import type { ExtractedRelation } from '../types/ExtractedRelation'
 
@@ -188,6 +189,31 @@ function onSpeedChange() {
 const container = ref<HTMLDivElement | null>(null)
 let network: Network | null = null
 
+// Use DataSet so we can update edges/nodes without touching private Network internals
+let nodesDS: DataSet<any> | null = null
+let edgesDS: DataSet<any> | null = null
+
+function resetDataSets(nodes: any[], edges: any[]) {
+  if (!nodesDS) nodesDS = new DataSet(nodes)
+  else {
+    nodesDS.clear()
+    nodesDS.add(nodes)
+  }
+
+  if (!edgesDS) edgesDS = new DataSet(edges)
+  else {
+    edgesDS.clear()
+    edgesDS.add(edges)
+  }
+}
+
+function updateEdge(id: string, patch: any) {
+  if (!edgesDS) return
+  const existed = edgesDS.get(id)
+  if (!existed) return
+  edgesDS.update({ id, ...patch })
+}
+
 let lastRenderKey = '' // 用于判断是否需要 flash
 
 function renderGraph(flash = false) {
@@ -336,10 +362,13 @@ function renderGraph(flash = false) {
     },
   }
 
+  // Keep DataSets in sync so we can animate by updating DataSet items
+  resetDataSets(nodes, edges)
+
   if (!network) {
-    network = new Network(container.value, { nodes, edges }, options)
+    network = new Network(container.value, { nodes: nodesDS!, edges: edgesDS! }, options)
   } else {
-    network.setData({ nodes, edges })
+    network.setData({ nodes: nodesDS!, edges: edgesDS! })
     network.setOptions(options)
   }
 
@@ -360,53 +389,43 @@ function pulseEdges(isConfirmed: boolean, isOverridden: boolean) {
   const hi = isConfirmed ? '#7c3aed' : isOverridden ? '#f97316' : '#64748b'
 
   // 1) DOMINANT 边闪烁
-  network.body.data.edges.update({
-    id: 'e_dominant',
+  updateEdge('e_dominant', {
     width: 6,
     dashes: false,
     color: { color: hi },
   })
 
   // 2) predicate 边也强调一下（更像“认知落点”）
-  network.body.data.edges.update({
-    id: 'e_relation',
+  updateEdge('e_relation', {
     width: 5,
     color: { color: hi },
   })
 
-  // 🔥 v10 challenger pulse
-  try {
-    network.body.data.edges.update({
-      id: 'e_challenger',
-      width: 6,
-      color: { color: '#fb923c' },
-    })
-  } catch {}
+  // 🔥 v10 challenger pulse (only if exists)
+  updateEdge('e_challenger', {
+    width: 6,
+    color: { color: '#fb923c' },
+  })
 
   // 回退
   window.setTimeout(() => {
     if (!network) return
     const r = relation.value
     if (!r) return
-    network.body.data.edges.update({
-      id: 'e_dominant',
+    updateEdge('e_dominant', {
       width: 2,
       dashes: true,
       color: { color: '#9ca3af' },
     })
-    network.body.data.edges.update({
-      id: 'e_relation',
+    updateEdge('e_relation', {
       width: 3,
       color: { color: r.polarity ? '#22c55e' : '#ef4444' },
     })
     // rollback challenger edge
-    try {
-      network.body.data.edges.update({
-        id: 'e_challenger',
-        width: 2,
-        color: { color: '#f97316' },
-      })
-    } catch {}
+    updateEdge('e_challenger', {
+      width: 2,
+      color: { color: '#f97316' },
+    })
   }, 520)
 }
 
@@ -449,6 +468,8 @@ onBeforeUnmount(() => {
   if (network) {
     network.destroy()
     network = null
+    nodesDS = null
+    edgesDS = null
   }
 })
 </script>
