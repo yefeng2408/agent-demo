@@ -1,0 +1,54 @@
+spring:
+  application:
+    name: agent
+  datasource:
+    url: jdbc:mysql://localhost:3306/act5?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+    username: root
+    password: yefeng
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  ai:
+    # 关键：指定哪个 provider 负责 chat / embedding
+    model:
+      chat: openai
+      embedding: ollama
+
+    # Chat -> DeepSeek（OpenAI 兼容）
+    openai:
+      api-key: sk-0814706a3e094203904230a30c96e3a9
+      base-url: https://api.deepseek.com
+      chat:
+        options:
+          model: deepseek-chat
+          temperature: 0.2
+
+    # Embedding -> Ollama（本地）
+    ollama:
+      base-url: http://localhost:11434
+      embedding:
+        options:
+          model: nomic-embed-text
+
+    # Milvus VectorStore
+    vectorstore:
+      milvus:
+        uri: localhost:19530
+        collection-name: vector_store
+        database-name: default
+        embedding-field-name: vector
+        token: ""
+
+neo4j:
+  uri: bolt://localhost:7687
+  username: neo4j
+  password: Neo4j@2026!
+
+#migration:
+#  enabled: true
+#  batchSize: 200
+milvus:
+  host: 127.0.0.1
+
+logging:
+  level:
+    org.springframework.ai: DEBUG
+    org.springframework.web.client.RestClient: DEBUG
