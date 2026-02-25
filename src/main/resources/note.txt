@@ -97,5 +97,6 @@ docker compose up -d nginx neo4j minio etcd milvus ollama ollama-init
     执行 ./deploy/switch.sh blue
     直接秒回旧版本
 
+看日志：docker logs agent_green -f
 
 

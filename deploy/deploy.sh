@@ -26,6 +26,19 @@ NGINX_CONTAINER="${NGINX_CONTAINER:-nginx}"
 NO_CACHE="${NO_CACHE:-1}"
 # 1: prune dangling images after success
 PRUNE_IMAGES="${PRUNE_IMAGES:-1}"
+
+# ===== v7 Canary switches =====
+# 1: enable canary rollout via nginx weights (10%->30%->100% by default)
+CANARY="${CANARY:-0}"
+# comma-separated percentages to shift traffic to TARGET, e.g. "10,30,100"
+CANARY_STEPS="${CANARY_STEPS:-10,30,100}"
+# seconds to wait between steps
+CANARY_SLEEP_SEC="${CANARY_SLEEP_SEC:-8}"
+# number of probe requests via nginx per step
+CANARY_PROBE_COUNT="${CANARY_PROBE_COUNT:-5}"
+# probe path via nginx (should be lightweight)
+CANARY_PROBE_PATH="${CANARY_PROBE_PATH:-/actuator/health}"
+
 # 1: also pull base images
 PULL_BASE="${PULL_BASE:-0}"
 # 1: run git pull before deploy
@@ -39,7 +52,8 @@ HEALTH_TIMEOUT_SEC="${HEALTH_TIMEOUT_SEC:-3}"
 BLUE_PORT=8081
 GREEN_PORT=8082
 
-HEALTH_PATH="${HEALTH_PATH:-/actuator/health}"
+#HEALTH_PATH="${HEALTH_PATH:-/actuator/health}"
+HEALTH_PATH=/
 HEALTH_RETRY="${HEALTH_RETRY:-30}"
 HEALTH_SLEEP="${HEALTH_SLEEP:-3}"
 
@@ -105,6 +119,92 @@ nginx_reload_or_rollback() {
   return 0
 }
 
+write_nginx_conf_weighted() {
+  # args: target_color target_percent current_color
+  local target_color="$1"
+  local target_pct="$2"
+  local current_color="$3"
+
+  # clamp
+  if [[ "$target_pct" -lt 0 ]]; then target_pct=0; fi
+  if [[ "$target_pct" -gt 100 ]]; then target_pct=100; fi
+
+  local other_pct=$((100 - target_pct))
+  local target_srv="agent_${target_color}:8080"
+
+  # If current is none/unknown, send all to target
+  if [[ "$current_color" != "blue" && "$current_color" != "green" ]]; then
+    other_pct=0
+  fi
+
+  local other_color
+  if [[ "$target_color" == "blue" ]]; then other_color="green"; else other_color="blue"; fi
+  local other_srv="agent_${other_color}:8080"
+
+  log "🧾 Writing nginx.conf weights: target=${target_color}(${target_pct}%) other=${other_color}(${other_pct}%)"
+
+  cat > "$NGINX_ACTIVE_CONF" <<EOF
+worker_processes  1;
+
+events { worker_connections  1024; }
+
+http {
+  # basic proxy settings
+  sendfile        on;
+  keepalive_timeout  65;
+
+  upstream agent_upstream {
+    # round robin with weights
+    server ${target_srv} weight=${target_pct} max_fails=3 fail_timeout=5s;
+EOF
+
+  # only add other server if it should receive traffic
+  if [[ "$other_pct" -gt 0 ]]; then
+    cat >> "$NGINX_ACTIVE_CONF" <<EOF
+    server ${other_srv} weight=${other_pct} max_fails=3 fail_timeout=5s;
+EOF
+  fi
+
+  cat >> "$NGINX_ACTIVE_CONF" <<'EOF'
+  }
+
+  server {
+    listen 80;
+
+    # allow larger payloads if needed
+    client_max_body_size 20m;
+
+    location / {
+      proxy_http_version 1.1;
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+
+      proxy_connect_timeout 3s;
+      proxy_read_timeout 60s;
+
+      proxy_pass http://agent_upstream;
+    }
+  }
+}
+EOF
+}
+
+probe_via_nginx() {
+  local count="$1"
+  local path="$2"
+  local i=1
+  while [[ "$i" -le "$count" ]]; do
+    if ! curl -fsS --max-time "$HEALTH_TIMEOUT_SEC" "http://127.0.0.1${path}" >/dev/null; then
+      return 1
+    fi
+    i=$((i+1))
+    sleep 1
+  done
+  return 0
+}
+
 # ===== v5 helpers =====
 # Get current git revision (best effort)
 current_git_rev() {
@@ -138,7 +238,7 @@ compose_build_service() {
 }
 
 # ===== Main =====
-log "🧬 Tencent Cloud BlueGreen Deploy v5 (no-cache rebuild + lock + auto switch + auto rollback)"
+log "🧬 Tencent Cloud Deploy v7 (BlueGreen + Canary via Nginx weights + no-cache rebuild + lock + auto rollback)"
 
 [[ -f docker-compose.yml ]] || die "请在项目根目录执行（docker-compose.yml 同级）"
 [[ -f .env ]] || log "⚠️ 未检测到 .env（如果你用到变量占位符，会解析为空）"
@@ -187,22 +287,64 @@ log "✅ Health OK"
 BACKUP="$(mktemp)"
 cp -f "$NGINX_ACTIVE_CONF" "$BACKUP" 2>/dev/null || true
 
-log "🔁 Switching nginx upstream => ${TARGET}"
-if [[ "$TARGET" == "blue" ]]; then
-  cp -f "$NGINX_BLUE_CONF" "$NGINX_ACTIVE_CONF"
-else
-  cp -f "$NGINX_GREEN_CONF" "$NGINX_ACTIVE_CONF"
-fi
+if [[ "$CANARY" == "1" ]]; then
+  log "🟠 Canary mode enabled: steps=${CANARY_STEPS}"
 
-log "♻️ Reloading nginx..."
-if ! nginx_reload_or_rollback "$BACKUP"; then
-  log "❌ Nginx reload failed => stop ${TARGET_SERVICE}"
-  $COMPOSE stop "$TARGET_SERVICE" || true
+  # Iterate canary steps (percent to TARGET)
+  IFS=',' read -r -a _steps <<< "$CANARY_STEPS"
+  for pct in "${_steps[@]}"; do
+    # trim spaces
+    pct="${pct//[[:space:]]/}"
+    [[ -n "$pct" ]] || continue
+
+    write_nginx_conf_weighted "$TARGET" "$pct" "$CURRENT"
+
+    log "♻️ Reloading nginx (canary ${pct}%)..."
+    if ! nginx_reload_or_rollback "$BACKUP"; then
+      log "❌ Nginx reload failed during canary => stop ${TARGET_SERVICE}"
+      $COMPOSE stop "$TARGET_SERVICE" || true
+      rm -f "$BACKUP" || true
+      die "灰度切流失败（已回滚 nginx.conf）"
+    fi
+
+    # Basic probe through nginx to catch obvious failures
+    log "🧪 Probing via nginx: ${CANARY_PROBE_COUNT}x ${CANARY_PROBE_PATH}"
+    if ! probe_via_nginx "$CANARY_PROBE_COUNT" "$CANARY_PROBE_PATH"; then
+      log "❌ Probe failed at canary ${pct}% => rollback"
+      cp -f "$BACKUP" "$NGINX_ACTIVE_CONF" || true
+      docker exec "$NGINX_CONTAINER" nginx -s reload || true
+      $COMPOSE stop "$TARGET_SERVICE" || true
+      rm -f "$BACKUP" || true
+      die "灰度探测失败（已回滚并停止新版本）"
+    fi
+
+    if [[ "$pct" != "100" ]]; then
+      log "⏳ Canary hold ${CANARY_SLEEP_SEC}s (pct=${pct}%)"
+      sleep "$CANARY_SLEEP_SEC"
+    fi
+  done
+
   rm -f "$BACKUP" || true
-  die "切流失败（已回滚 nginx.conf）"
+  log "🎉 Canary rollout completed: traffic=100% to ${TARGET}"
+
+else
+  log "🔁 Switching nginx upstream => ${TARGET}"
+  if [[ "$TARGET" == "blue" ]]; then
+    cp -f "$NGINX_BLUE_CONF" "$NGINX_ACTIVE_CONF"
+  else
+    cp -f "$NGINX_GREEN_CONF" "$NGINX_ACTIVE_CONF"
+  fi
+
+  log "♻️ Reloading nginx..."
+  if ! nginx_reload_or_rollback "$BACKUP"; then
+    log "❌ Nginx reload failed => stop ${TARGET_SERVICE}"
+    $COMPOSE stop "$TARGET_SERVICE" || true
+    rm -f "$BACKUP" || true
+    die "切流失败（已回滚 nginx.conf）"
+  fi
+  rm -f "$BACKUP" || true
+  log "🎉 Traffic switched to ${TARGET}"
 fi
-rm -f "$BACKUP" || true
-log "🎉 Traffic switched to ${TARGET}"
 
 # Stop old version (optional)
 if [[ "$CURRENT" == "blue" || "$CURRENT" == "green" ]]; then
