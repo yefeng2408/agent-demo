@@ -63,3 +63,5 @@ neo4j/
 
 
 .env
+
+app.jar

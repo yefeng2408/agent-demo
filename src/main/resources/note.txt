@@ -100,5 +100,5 @@ docker compose up -d nginx neo4j minio etcd milvus ollama ollama-init
 
 看日志：docker logs agent_green -f
 删冲突临时文件：sudo rm -f /tmp/agent-stack-deploy.lock
-
+chmod +x deploy/switch.sh
 
