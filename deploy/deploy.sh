@@ -1,5 +1,18 @@
 #!/usr/bin/env bash
+
 set -euo pipefail
+
+# ===== Deploy Lock (prevent concurrent deploy) =====
+LOCK_FILE="${LOCK_FILE:-/tmp/agent-stack-deploy.lock}"
+exec 9>"$LOCK_FILE"
+if ! command -v flock >/dev/null 2>&1; then
+  echo "❌ 缺少命令：flock（建议 apt-get install -y util-linux）" >&2
+  exit 1
+fi
+if ! flock -n 9; then
+  echo "❌ 另一个部署进程正在运行（lock: $LOCK_FILE）" >&2
+  exit 1
+fi
 
 # ===== Config =====
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -7,6 +20,21 @@ cd "$PROJECT_ROOT"
 
 COMPOSE="docker compose"
 NGINX_CONTAINER="${NGINX_CONTAINER:-nginx}"
+
+# ===== v5 CI/CD switches =====
+# 1: force rebuild without cache (recommended on Tencent Cloud)
+NO_CACHE="${NO_CACHE:-1}"
+# 1: prune dangling images after success
+PRUNE_IMAGES="${PRUNE_IMAGES:-1}"
+# 1: also pull base images
+PULL_BASE="${PULL_BASE:-0}"
+# 1: run git pull before deploy
+GIT_PULL="${GIT_PULL:-1}"
+# build args for docker (optional)
+DOCKER_BUILD_ARGS="${DOCKER_BUILD_ARGS:-}"
+
+# Health check tuning
+HEALTH_TIMEOUT_SEC="${HEALTH_TIMEOUT_SEC:-3}"
 
 BLUE_PORT=8081
 GREEN_PORT=8082
@@ -27,8 +55,11 @@ need() {
 }
 
 need docker
+need git
+need flock
 need curl
 
+#
 # ===== Helpers =====
 current_color_from_conf() {
   if [[ ! -f "$NGINX_ACTIVE_CONF" ]]; then
@@ -47,9 +78,10 @@ health_check_local_port() {
   local port="$1"
   local retry="$HEALTH_RETRY"
 
-  until curl -fsS "http://127.0.0.1:${port}${HEALTH_PATH}" | grep -q '"UP"\|UP'; do
+  until curl -fsS --max-time "$HEALTH_TIMEOUT_SEC" "http://127.0.0.1:${port}${HEALTH_PATH}" | grep -q '"UP"\|UP'; do
     retry=$((retry-1))
     log "⏳ waiting health on :${port} (left=${retry})"
+    log "   ↳ curl exit=$? (port=${port})"
     sleep "$HEALTH_SLEEP"
     if [[ "$retry" -le 0 ]]; then
       return 1
@@ -73,8 +105,40 @@ nginx_reload_or_rollback() {
   return 0
 }
 
+# ===== v5 helpers =====
+# Get current git revision (best effort)
+current_git_rev() {
+  git rev-parse --short HEAD 2>/dev/null || echo "unknown"
+}
+
+# Build target service image (force rebuild to avoid stale jar/layer cache)
+compose_build_service() {
+  local svc="$1"
+  local args=(build
+    --build-arg GIT_COMMIT="$(current_git_rev)"
+    --build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  )
+
+  if [[ "$NO_CACHE" == "1" ]]; then
+    args+=(--no-cache)
+  fi
+  if [[ "$PULL_BASE" == "1" ]]; then
+    args+=(--pull)
+  fi
+  # pass extra build args as raw string if provided
+  if [[ -n "$DOCKER_BUILD_ARGS" ]]; then
+    # shellcheck disable=SC2206
+    args+=($DOCKER_BUILD_ARGS)
+  fi
+
+  $COMPOSE "${args[@]}" "$svc"
+  log "🔎 Image observability info for ${svc}:"
+  docker inspect $(docker compose images -q "$svc") \
+    --format '   → Image={{.Id}}  Created={{.Created}}' 2>/dev/null || true
+}
+
 # ===== Main =====
-log "🧬 Tencent Cloud BlueGreen Deploy v4 (auto switch + auto rollback)"
+log "🧬 Tencent Cloud BlueGreen Deploy v5 (no-cache rebuild + lock + auto switch + auto rollback)"
 
 [[ -f docker-compose.yml ]] || die "请在项目根目录执行（docker-compose.yml 同级）"
 [[ -f .env ]] || log "⚠️ 未检测到 .env（如果你用到变量占位符，会解析为空）"
@@ -97,11 +161,19 @@ OLD_SERVICE="agent_${CURRENT}"
 log "🟢 Current Traffic : ${CURRENT}"
 log "🚀 Deploy Target   : ${TARGET} (service=${TARGET_SERVICE}, port=${TARGET_PORT})"
 
-log "📥 git pull..."
-git pull || true
+if [[ "$GIT_PULL" == "1" ]]; then
+  log "📥 git pull..."
+  git pull || log "⚠️ git pull 失败（将继续使用当前代码版本）"
+else
+  log "⏭️ skip git pull (GIT_PULL=0)"
+fi
 
-log "🔨 Building & starting ${TARGET_SERVICE} ..."
-$COMPOSE up -d --build "$TARGET_SERVICE"
+GIT_REV="$(current_git_rev)"
+log "🔨 Building ${TARGET_SERVICE} (git=${GIT_REV}, NO_CACHE=${NO_CACHE}, PULL_BASE=${PULL_BASE}) ..."
+compose_build_service "$TARGET_SERVICE"
+
+log "🚚 Starting ${TARGET_SERVICE} ..."
+$COMPOSE up -d --no-deps "$TARGET_SERVICE"
 
 log "🧪 Health checking ${TARGET} on :${TARGET_PORT}${HEALTH_PATH}"
 if ! health_check_local_port "$TARGET_PORT"; then
@@ -138,4 +210,12 @@ if [[ "$CURRENT" == "blue" || "$CURRENT" == "green" ]]; then
   $COMPOSE stop "$OLD_SERVICE" || true
 fi
 
-log "✅ Deploy SUCCESS"
+if [[ "$PRUNE_IMAGES" == "1" ]]; then
+  log "🧽 Pruning dangling images..."
+  docker image prune -f >/dev/null 2>&1 || true
+fi
+
+log "📡 Runtime container version check:"
+docker ps --format '   → {{.Names}}  |  {{.Image}}  |  {{.RunningFor}}'
+
+log "🧬 Deploy SUCCESS (git=${GIT_REV}, traffic=${TARGET})"
