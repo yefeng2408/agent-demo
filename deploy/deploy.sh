@@ -235,17 +235,41 @@ docker rm -f "agent_$TARGET" >/dev/null 2>&1 || true
 RUNTIME_FINAL="$(choose_runtime_image)"
 echo "🐳 Runtime image selected: $RUNTIME_FINAL"
 
-#############################################
-# 🧠 Run container (Zero Build Runtime)
-#############################################
+# -----------------------------
+# 🌐 Detect nginx networks (must share DNS)
+# -----------------------------
+NGINX_NETS=$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{print $k " "}}{{end}}' nginx 2>/dev/null || true)
+if [ -z "$NGINX_NETS" ]; then
+  echo "❌ nginx container not found or has no networks."
+  exit 1
+fi
+echo "🌐 Nginx networks: $NGINX_NETS"
+
+# -----------------------------
+# 🧠 Stop old target container (if exists)
+# -----------------------------
+docker rm -f "agent_$TARGET" >/dev/null 2>&1 || true
+
 echo "🐳 Starting agent_$TARGET..."
 
+# 先用第一个 network 启动（docker run 只能 --network 一个）
+PRIMARY_NET=$(echo "$NGINX_NETS" | awk '{print $1}')
 docker run -d \
   --name "agent_$TARGET" \
-  -p "$TARGET_PORT:8080" \
-  -v "$OUT_JAR:/app/app.jar" \
-  "$RUNTIME_FINAL" \
+  --network "$PRIMARY_NET" \
+  --network-alias "agent_$TARGET" \
+  -p $TARGET_PORT:8080 \
+  -v "$JAR_DIR/$TARGET/app.jar:/app/app.jar" \
+  --restart unless-stopped \
+  "$RUNTIME_IMAGE" \
   java -Xms256m -Xmx768m -jar /app/app.jar
+
+# 再把容器补连到 nginx 其它 network（可选但更稳）
+for net in $NGINX_NETS; do
+  if [ "$net" != "$PRIMARY_NET" ]; then
+    docker network connect "$net" "agent_$TARGET" 2>/dev/null || true
+  fi
+done
 
 #############################################
 # 🧠 Health Detect (v17 safe)
