@@ -79,6 +79,7 @@ CALL apoc.periodic.iterate(
     cd agent-stack
     git pull
     ./mvnw clean package -DskipTests
+    mvn clean package -DskipTests
 
 ② 首次部署启动容器
 docker compose up -d nginx neo4j minio etcd milvus ollama ollama-init
