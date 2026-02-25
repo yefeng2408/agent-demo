@@ -1,40 +1,27 @@
-# =========================================
-# Stage 1 — deps: 依赖缓存层（加速）
-# =========================================
-FROM maven:3.9-eclipse-temurin-21 AS deps
+# syntax=docker/dockerfile:1.7
+
+FROM maven:3.9-eclipse-temurin-21 AS builder
 WORKDIR /build
 
+# 先拷依赖描述文件，最大化缓存命中
 COPY pom.xml .
 COPY .mvn .mvn
 COPY mvnw .
 RUN chmod +x mvnw
-RUN ./mvnw -B -q -DskipTests dependency:go-offline
 
-# =========================================
-# Stage 2 — builder: 构建层
-# =========================================
-FROM deps AS builder
-WORKDIR /build
+# ✅ Maven 依赖缓存：只要 pom.xml 不变，这层永远不重新下载
+RUN --mount=type=cache,target=/root/.m2 \
+    ./mvnw -B -q -DskipTests dependency:go-offline
 
+# 再拷源码（改代码只会重跑下面这层）
 COPY src src
-RUN ./mvnw -B -DskipTests clean package
 
-# =========================================
-# Stage 3 — runtime: Distroless 运行层
-# =========================================
-#FROM gcr.io/distroless/java21-debian12:nonroot
-FROM eclipse-temurin:21-jre
+# ✅ 编译也复用同一个 ~/.m2 缓存
+RUN --mount=type=cache,target=/root/.m2 \
+    ./mvnw -B -q -DskipTests package
+
+
+FROM eclipse-temurin:21-jre-jammy
 WORKDIR /app
-
-# 复制 jar（如果 target 里会产出多个 jar，建议改成精确文件名）
-#COPY --from=builder /build/target/*.jar /app/app.jar
-COPY --from=builder /build/target/agent-0.0.1-SNAPSHOT.jar /app/app.jar
-
-# 生产环境建议增加这些 JVM 参数（按你 2c4g 适当调）
-# distroless 没有 shell，所以用 JAVA_TOOL_OPTIONS 注入最方便
-ENV JAVA_TOOL_OPTIONS="-Xms256m -Xmx768m -XX:MaxMetaspaceSize=256m -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai"
-
-# 注意：distroless 的入口点就是 java，所以直接传参
-# profile 建议用环境变量 SPRING_PROFILES_ACTIVE（compose 里配），这里也可写死
-#ENTRYPOINT ["/usr/bin/java","-jar","/app/app.jar"]
+COPY --from=builder /build/target/*jar /app/app.jar
 ENTRYPOINT ["java","-jar","/app/app.jar"]
