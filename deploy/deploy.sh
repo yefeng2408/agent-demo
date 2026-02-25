@@ -2,61 +2,30 @@
 set -euo pipefail
 
 #############################################
-# Agent Deploy — v17 CN Mirror Turbo
-# Blue/Green + ZeroBuild + Auto Release Pull
+# Agent Deploy v18 — CN Mirror + Auto Network
+# ✅ 自动读取最新 release
+# ✅ 自动识别 jar
+# ✅ 自动镜像优先
+# ✅ 自动 fallback
+# ✅ 自动加入 nginx networks（修复 host not found）
 #############################################
 
 APP_NAME="agent"
 DEPLOY_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 JAR_DIR="$DEPLOY_DIR/deploy/jars"
 
-BLUE_PORT="${BLUE_PORT:-8081}"
-GREEN_PORT="${GREEN_PORT:-8082}"
+BLUE_PORT=8081
+GREEN_PORT=8082
 
-# ====== Repo config (GitHub) ======
-GITHUB_OWNER="${GITHUB_OWNER:-yefeng2408}"
-GITHUB_REPO="${GITHUB_REPO:-agent-demo}"
-GITHUB_API="https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest"
-
-# ====== Download behavior ======
-# 0 = 强制直连 GitHub
-# 1 = 国内代理优先（默认）
-CN_MIRROR_FIRST="${CN_MIRROR_FIRST:-1}"
-
-# 国内代理列表（会自动探活，能用哪个用哪个）
-# 说明：这些代理网站稳定性随时间波动，所以做成自动探活 + fallback
-MIRROR_PREFIXES=(
-  "https://ghproxy.com/"
-  "https://mirror.ghproxy.com/"
-  "https://github.moeyy.xyz/"
-  "https://gh.api.99988866.xyz/"
-)
-
-# ====== Docker runtime image (JRE) ======
-# 你可以自己 export RUNTIME_IMAGE=xxx 来覆盖
-RUNTIME_IMAGE="${RUNTIME_IMAGE:-eclipse-temurin:21-jre}"
-
-# 国内镜像（不保证每个都存在，所以会逐个尝试）
-# Tencent: ccr.ccs.tencentyun.com
-# Aliyun : registry.cn-hangzhou.aliyuncs.com
-RUNTIME_IMAGE_CANDIDATES=(
-  "ccr.ccs.tencentyun.com/library/eclipse-temurin:21-jre"
-  "registry.cn-hangzhou.aliyuncs.com/library/eclipse-temurin:21-jre"
-  "eclipse-temurin:21-jre"
-)
+# GitHub Repo
+GH_OWNER="yefeng2408"
+GH_REPO="agent-demo"
 
 LOCK_FILE="/tmp/agent-stack-deploy.lock"
-
-# ====== Health check ======
-# 0 = 正常检查
-# 1 = 跳过（默认，避免你现在这种“启动成功但误判回滚”）
-SKIP_HEALTH="${SKIP_HEALTH:-1}"
+SKIP_HEALTH="${SKIP_HEALTH:-0}"     # SKIP_HEALTH=1 跳过健康检查
 HEALTH_TIMEOUT_SEC="${HEALTH_TIMEOUT_SEC:-60}"
-HEALTH_INTERVAL_SEC="${HEALTH_INTERVAL_SEC:-3}"
-KEEP_FAILED_CONTAINER="${KEEP_FAILED_CONTAINER:-1}"
 
-#############################################
-echo "🧠 Agent Deploy v17 — CN Mirror Turbo"
+echo "🧠 Agent Deploy v18 — CN Mirror + Auto Network"
 echo "📦 Zero Build Mode"
 echo "🔐 Rootless Mode"
 echo "--------------------------------"
@@ -72,245 +41,184 @@ touch "$LOCK_FILE"
 trap "rm -f $LOCK_FILE" EXIT
 
 #############################################
-# 🧠 Detect current slot
+# 0) nginx 必须存在
 #############################################
-CURRENT="green"
-if docker ps | grep -q "agent_blue" ; then CURRENT="blue"; fi
-if docker ps | grep -q "agent_green" ; then CURRENT="green"; fi
-echo "🎯 Current Traffic : $CURRENT"
+if ! docker ps --format '{{.Names}}' | grep -qx nginx; then
+  echo "❌ nginx container not running."
+  exit 1
+fi
 
 #############################################
-# 🧠 Decide target
+# 1) Detect current slot
 #############################################
+CURRENT="green"
+if docker ps --format '{{.Names}}' | grep -qx agent_blue; then CURRENT="blue"; fi
+if docker ps --format '{{.Names}}' | grep -qx agent_green; then CURRENT="green"; fi
+echo "🎯 Current Traffic : $CURRENT"
+
 if [ "$CURRENT" = "blue" ]; then
-  TARGET="green"
-  TARGET_PORT=$GREEN_PORT
+  TARGET="green"; TARGET_PORT=$GREEN_PORT
 else
-  TARGET="blue"
-  TARGET_PORT=$BLUE_PORT
+  TARGET="blue";  TARGET_PORT=$BLUE_PORT
 fi
 echo "🚀 Deploy Target : $TARGET ($TARGET_PORT)"
 
 mkdir -p "$JAR_DIR/$TARGET"
 
 #############################################
-# Helpers
-#############################################
-have_cmd() { command -v "$1" >/dev/null 2>&1; }
-
-curl_head_ok() {
-  local url="$1"
-  curl -fsSIL --connect-timeout 3 --max-time 6 "$url" >/dev/null 2>&1
-}
-
-download_with_curl() {
-  local url="$1"
-  local out="$2"
-  # -C - 支持断点续传
-  curl -fL --connect-timeout 8 --max-time 0 \
-    --retry 6 --retry-delay 2 --retry-all-errors \
-    -C - -o "$out" "$url"
-}
-
-json_get_jar_url() {
-  # 优先 app.jar，其次第一个 .jar
-  # 用 python3 解析，避免依赖 jq
-  python3 - "$@" <<'PY'
-import json,sys
-data=json.load(sys.stdin)
-assets=data.get("assets") or []
-# 1) app.jar
-for a in assets:
-    name=a.get("name","")
-    if name=="app.jar":
-        print(a.get("browser_download_url",""))
-        sys.exit(0)
-# 2) first .jar
-for a in assets:
-    name=a.get("name","")
-    if name.endswith(".jar"):
-        print(a.get("browser_download_url",""))
-        sys.exit(0)
-print("")
-PY
-}
-
-choose_runtime_image() {
-
-  # ⚠️ stdout 只能输出最终镜像
-  # 日志必须 >&2
-
-  for img in "${RUNTIME_IMAGE_CANDIDATES[@]}"; do
-    echo "🐳 Pull runtime image try: $img" >&2
-
-    if docker pull "$img" >/dev/null 2>&1; then
-      echo "$img"
-      return 0
-    fi
-
-    echo "⚠️ Pull failed: $img" >&2
-  done
-
-  # fallback
-  echo "$RUNTIME_IMAGE"
-}
-
-#############################################
-# 🧠 Resolve latest jar from GitHub release
+# 2) Resolve latest release asset (GitHub API)
 #############################################
 echo "🔎 Resolve latest release via GitHub API..."
-if ! have_cmd python3; then
-  echo "❌ python3 not found. Please install: sudo apt-get update && sudo apt-get install -y python3"
+API_JSON="$(curl -fsSL --retry 3 --retry-delay 2 "https://api.github.com/repos/$GH_OWNER/$GH_REPO/releases/latest")" || {
+  echo "❌ GitHub API failed."
   exit 1
+}
+
+TAG_NAME="$(echo "$API_JSON" | grep -oE '"tag_name"\s*:\s*"[^"]+"' | head -n1 | cut -d'"' -f4)"
+[ -n "${TAG_NAME:-}" ] || TAG_NAME="latest"
+echo "🏷️ Latest tag: $TAG_NAME"
+
+# 找第一个 .jar asset 的浏览器下载地址
+ASSET_URL="$(echo "$API_JSON" | grep -oE '"browser_download_url"\s*:\s*"[^"]+\.jar"' | head -n1 | cut -d'"' -f4)"
+if [ -z "${ASSET_URL:-}" ]; then
+  # fallback：你固定的 latest/app.jar
+  ASSET_URL="https://github.com/$GH_OWNER/$GH_REPO/releases/download/latest/app.jar"
 fi
+echo "🧩 Jar asset: $ASSET_URL"
 
-release_json="$(curl -fsSL --connect-timeout 8 --max-time 15 --retry 5 --retry-delay 2 --retry-all-errors "$GITHUB_API")"
-JAR_URL="$(printf "%s" "$release_json" | python3 -c "import sys,json; data=json.load(sys.stdin); assets=data.get('assets') or [];
-print(next((a.get('browser_download_url','') for a in assets if a.get('name')=='app.jar'), next((a.get('browser_download_url','') for a in assets if (a.get('name','').endswith('.jar'))), '')) )")"
-
-if [ -z "${JAR_URL:-}" ]; then
-  echo "❌ No jar asset found in latest release."
-  echo "   Tip: upload app.jar to GitHub Release assets."
-  exit 1
-fi
-
-echo "🏷️ Latest tag: latest"
-echo "🧩 Jar asset: $JAR_URL"
+# 自动识别 jar 文件名
+JAR_NAME="$(basename "$ASSET_URL")"
+[ -n "$JAR_NAME" ] || JAR_NAME="app.jar"
+DEST_JAR="$JAR_DIR/$TARGET/$JAR_NAME"
 
 #############################################
-# 🧠 Pull Artifact (CN mirror first + fallback)
+# 3) Download jar (CN mirror first + fallback)
 #############################################
 echo "📦 Pull latest jar from release..."
 
-OUT_JAR="$JAR_DIR/$TARGET/app.jar"
-rm -f "$OUT_JAR.tmp" || true
+MIRRORS=(
+  "https://ghproxy.com/"
+  "https://mirror.ghproxy.com/"
+  "https://github.moeyy.xyz/"
+  "https://gh.api.99988866.xyz/"
+  ""  # direct
+)
 
-# 1) CN mirror candidates
-if [ "$CN_MIRROR_FIRST" = "1" ]; then
-  for prefix in "${MIRROR_PREFIXES[@]}"; do
-    mirror_url="${prefix}${JAR_URL}"
-    echo "⬇️ Trying: $mirror_url"
+download_ok=0
+for prefix in "${MIRRORS[@]}"; do
+  URL="${prefix}${ASSET_URL}"
+  echo "⬇️ Trying: $URL"
+  if curl -fL --connect-timeout 10 --max-time 600 \
+      --retry 3 --retry-delay 2 \
+      -o "$DEST_JAR" "$URL"; then
+    download_ok=1
+    break
+  else
+    echo "⚠️ Mirror not reachable, skip."
+  fi
+done
 
-    # 先探活，避免你这种 443 timeout 卡太久
-    if ! curl_head_ok "$mirror_url"; then
-      echo "⚠️ Mirror not reachable, skip."
-      continue
-    fi
-
-    if download_with_curl "$mirror_url" "$OUT_JAR.tmp"; then
-      mv "$OUT_JAR.tmp" "$OUT_JAR"
-      echo "✅ Downloaded via mirror."
-      break
-    else
-      echo "⚠️ Mirror download failed, try next."
-      rm -f "$OUT_JAR.tmp" || true
-    fi
-  done
-fi
-
-# 2) direct GitHub fallback
-if [ ! -f "$OUT_JAR" ]; then
-  echo "⬇️ Fallback direct: $JAR_URL"
-  download_with_curl "$JAR_URL" "$OUT_JAR.tmp"
-  mv "$OUT_JAR.tmp" "$OUT_JAR"
-  echo "✅ Downloaded via direct GitHub."
-fi
-
-# basic verify
-if [ ! -s "$OUT_JAR" ]; then
-  echo "❌ Downloaded jar is empty."
+if [ "$download_ok" -ne 1 ]; then
+  echo "❌ Download jar failed."
   exit 1
 fi
 
-echo "📦 Jar ready: $OUT_JAR ($(du -h "$OUT_JAR" | awk '{print $1}'))"
+echo "✅ Jar ready: $DEST_JAR ($(du -h "$DEST_JAR" | awk '{print $1}'))"
+ln -sf "$DEST_JAR" "$JAR_DIR/$TARGET/app.jar"  # 统一对外路径
 
 #############################################
-# 🧠 Stop old target container (if exists)
+# 4) Select runtime image (CN registry first + fallback)
 #############################################
-docker rm -f "agent_$TARGET" >/dev/null 2>&1 || true
+RUNTIME_CANDIDATES=(
+  "ccr.ccs.tencentyun.com/library/eclipse-temurin:21-jre"
+  "registry.cn-hangzhou.aliyuncs.com/library/eclipse-temurin:21-jre"
+  "eclipse-temurin:21-jre"
+)
+
+RUNTIME_IMAGE=""
+for img in "${RUNTIME_CANDIDATES[@]}"; do
+  echo "🐳 Pull runtime image try: $img"
+  if docker pull "$img" >/dev/null 2>&1; then
+    RUNTIME_IMAGE="$img"
+    break
+  else
+    echo "⚠️ Pull failed: $img"
+  fi
+done
+
+if [ -z "$RUNTIME_IMAGE" ]; then
+  echo "❌ No runtime image available."
+  exit 1
+fi
+echo "🐳 Runtime image selected: $RUNTIME_IMAGE"
 
 #############################################
-# 🧠 Choose runtime image (CN mirror first)
+# 5) Determine nginx networks (关键修复点)
 #############################################
-RUNTIME_FINAL="$(choose_runtime_image)"
-echo "🐳 Runtime image selected: $RUNTIME_FINAL"
-
-# -----------------------------
-# 🌐 Detect nginx networks (must share DNS)
-# -----------------------------
-NGINX_NETS=$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{print $k " "}}{{end}}' nginx 2>/dev/null || true)
-if [ -z "$NGINX_NETS" ]; then
-  echo "❌ nginx container not found or has no networks."
+NGINX_NETS="$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{print $k " "}}{{end}}' nginx)"
+if [ -z "${NGINX_NETS:-}" ]; then
+  echo "❌ Cannot detect nginx networks."
   exit 1
 fi
 echo "🌐 Nginx networks: $NGINX_NETS"
 
-# -----------------------------
-# 🧠 Stop old target container (if exists)
-# -----------------------------
+PRIMARY_NET="$(echo "$NGINX_NETS" | awk '{print $1}')"
+echo "🌐 Primary network for new agent: $PRIMARY_NET"
+
+#############################################
+# 6) Run target container & attach to all nginx networks
+#############################################
+echo "🧹 Stop old target container (if exists)"
 docker rm -f "agent_$TARGET" >/dev/null 2>&1 || true
 
-echo "🐳 Starting agent_$TARGET..."
-
-# 先用第一个 network 启动（docker run 只能 --network 一个）
-PRIMARY_NET=$(echo "$NGINX_NETS" | awk '{print $1}')
+echo "🚀 Starting agent_$TARGET..."
 docker run -d \
   --name "agent_$TARGET" \
   --network "$PRIMARY_NET" \
   --network-alias "agent_$TARGET" \
-  -p $TARGET_PORT:8080 \
+  -p "$TARGET_PORT:8080" \
   -v "$JAR_DIR/$TARGET/app.jar:/app/app.jar" \
   --restart unless-stopped \
   "$RUNTIME_IMAGE" \
   java -Xms256m -Xmx768m -jar /app/app.jar
 
-# 再把容器补连到 nginx 其它 network（可选但更稳）
+# 补连其它 nginx network（让 nginx 一定能解析到 agent_xxx）
 for net in $NGINX_NETS; do
-  if [ "$net" != "$PRIMARY_NET" ]; then
-    docker network connect "$net" "agent_$TARGET" 2>/dev/null || true
-  fi
+  docker network connect "$net" "agent_$TARGET" 2>/dev/null || true
 done
 
+echo "🔎 Verify nginx can resolve agent_$TARGET ..."
+docker exec nginx getent hosts "agent_$TARGET" || true
+
 #############################################
-# 🧠 Health Detect (v17 safe)
+# 7) Health check (可关闭)
 #############################################
 if [ "$SKIP_HEALTH" = "1" ]; then
-  echo "🟨 SKIP_HEALTH=1 — skip health check (v17 safe mode)"
-  sleep 5
+  echo "🟨 SKIP_HEALTH=1 — skip health check (v18 safe mode)"
 else
   echo "🧪 Waiting Health..."
+  end=$((SECONDS + HEALTH_TIMEOUT_SEC))
   HEALTH_OK=0
-  deadline=$(( $(date +%s) + HEALTH_TIMEOUT_SEC ))
-
-  while [ "$(date +%s)" -lt "$deadline" ]; do
+  while [ $SECONDS -lt $end ]; do
     if curl -fs "http://localhost:$TARGET_PORT/actuator/health" >/dev/null 2>&1; then
       HEALTH_OK=1; break
     fi
     if curl -fs "http://localhost:$TARGET_PORT/health" >/dev/null 2>&1; then
       HEALTH_OK=1; break
     fi
-    if curl -sS --connect-timeout 1 "http://localhost:$TARGET_PORT/" >/dev/null 2>&1; then
-      echo "🟡 Minimal port check PASS"
-      HEALTH_OK=1; break
-    fi
-    sleep "$HEALTH_INTERVAL_SEC"
+    sleep 3
   done
 
   if [ "$HEALTH_OK" -ne 1 ]; then
-    echo "❌ Health FAIL — show logs"
-    docker logs --tail 200 "agent_$TARGET" || true
-    if [ "$KEEP_FAILED_CONTAINER" = "1" ]; then
-      echo "🧷 KEEP_FAILED_CONTAINER=1 — container kept"
-      exit 1
-    fi
-    docker rm -f "agent_$TARGET" || true
+    echo "❌ Health FAIL — rollback"
+    docker rm -f "agent_$TARGET" >/dev/null 2>&1 || true
     exit 1
   fi
   echo "✅ Health PASS"
 fi
 
 #############################################
-# 🧠 Switch Traffic (Nginx upstream switch)
+# 8) Switch traffic (你现有逻辑：写 upstream.conf + reload)
 #############################################
 echo "🔀 Switch traffic to $TARGET"
 
@@ -320,11 +228,12 @@ else
   docker exec nginx sh -c "echo 'set \$upstream http://agent_green:8080;' > /etc/nginx/conf.d/upstream.conf"
 fi
 
+docker exec nginx nginx -t
 docker exec nginx nginx -s reload
 
 #############################################
-# 🧠 Stop old slot
+# 9) Stop old slot (如果你想保留回滚能力，可注释掉)
 #############################################
 docker rm -f "agent_$CURRENT" >/dev/null 2>&1 || true
 
-echo "🎉 Deploy SUCCESS — v17 CN Mirror Turbo"
+echo "🎉 Deploy SUCCESS — v18"
