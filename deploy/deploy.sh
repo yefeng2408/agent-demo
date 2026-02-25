@@ -136,15 +136,22 @@ PY
 }
 
 choose_runtime_image() {
+
+  # ⚠️ stdout 只能输出最终镜像
+  # 日志必须 >&2
+
   for img in "${RUNTIME_IMAGE_CANDIDATES[@]}"; do
-    echo "🐳 Pull runtime image try: $img"
+    echo "🐳 Pull runtime image try: $img" >&2
+
     if docker pull "$img" >/dev/null 2>&1; then
       echo "$img"
       return 0
     fi
-    echo "⚠️ Pull failed: $img"
+
+    echo "⚠️ Pull failed: $img" >&2
   done
-  # 如果全失败，返回默认（让后续 docker run 自己报错）
+
+  # fallback
   echo "$RUNTIME_IMAGE"
 }
 
