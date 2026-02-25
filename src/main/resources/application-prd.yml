@@ -23,7 +23,7 @@ spring:
 
     # Embedding -> Ollama（本地）
     ollama:
-      base-url: http://host.docker.internal:11434
+      base-url: http://ollama:11434
       embedding:
         options:
           model: nomic-embed-text

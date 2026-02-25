@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 COLOR="${1:-}"
 if [[ "$COLOR" != "blue" && "$COLOR" != "green" ]]; then
   echo "Usage: ./deploy/switch.sh blue|green"
@@ -27,5 +26,4 @@ cp "$SRC" "deploy/nginx.conf"
 # 3) reload nginx（0 downtime）
 echo "[3/3] Reloading nginx"
 docker exec nginx nginx -s reload
-
 echo "🎉 Switched traffic to: $COLOR"

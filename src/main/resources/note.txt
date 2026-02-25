@@ -76,12 +76,13 @@ CALL apoc.periodic.iterate(
 
 部署流程：
 ① 拉代码
-    cd /agent-stack
+    cd agent-stack
     git pull
-    mvn clean package -DskipTests
 
 ② build 绿
-    docker compose up -d --build agent_green
+    #docker compose up -d --build agent_green
+    docker compose build agent_green
+    docker compose up -d --build
 
 ③ 验证绿
     curl http://127.0.0.1:8082/actuator/health
@@ -94,7 +95,6 @@ CALL apoc.periodic.iterate(
     如果发现新版本有问题
     执行 ./deploy/switch.sh blue
     直接秒回旧版本
-
 
 chmod +x deploy/switch.sh
 
