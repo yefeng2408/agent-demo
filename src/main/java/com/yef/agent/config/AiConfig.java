@@ -22,7 +22,7 @@ public class AiConfig {
     @Bean
     @Qualifier("personalChatClient")
     public ChatClient personalChatClient(ChatClient.Builder builder) {
-        return builder.build(); // 就这么简单
+        return builder.build();
     }
 
     @Bean

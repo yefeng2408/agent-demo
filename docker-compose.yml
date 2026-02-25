@@ -1,107 +1,105 @@
+version: "3.9"
+
 services:
 
-  # ================================
-  # ETCD（Milvus 依赖）
-  # ================================
+  # ======================
+  # ETCD
+  # ======================
   etcd:
     image: quay.io/coreos/etcd:v3.5.12
-    container_name: etcd
     command: >
       etcd
       --advertise-client-urls=http://etcd:2379
       --listen-client-urls=http://0.0.0.0:2379
-    ports:
-      - "2379:2379"
     volumes:
       - etcd_data:/etcd
     restart: always
 
-  # ================================
-  # MINIO（Milvus 依赖）
-  # ================================
+  # ======================
+  # MINIO
+  # ======================
   minio:
     image: minio/minio
-    container_name: minio
     command: server /data
     environment:
-      TZ: ${TZ}
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-    ports:
-      - "9000:9000"
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
     volumes:
       - minio_data:/data
     restart: always
 
-  # ================================
-  # Milvus Standalone
-  # ================================
+  # ======================
+  # MILVUS
+  # ======================
   milvus:
     image: milvusdb/milvus:v2.4.4
-    container_name: milvus
     command: ["milvus", "run", "standalone"]
     depends_on:
       - etcd
       - minio
     environment:
-      TZ: ${TZ}
       ETCD_ENDPOINTS: etcd:2379
       MINIO_ADDRESS: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
     ports:
       - "19530:19530"
-      - "9091:9091"
     volumes:
       - milvus_data:/var/lib/milvus
     restart: always
 
-  # ================================
-  # Neo4j
-  # ================================
+  # ======================
+  # NEO4J
+  # ======================
   neo4j:
     image: neo4j:5
-    container_name: neo4j
     environment:
-      TZ: ${TZ}
-      NEO4J_AUTH: ${NEO4J_AUTH}
+      NEO4J_AUTH: neo4j/12345678
     ports:
-      - "7474:7474"
       - "7687:7687"
     volumes:
       - neo4j_data:/data
     restart: always
 
-  # ================================
-  # Agent（SpringBoot）
-  # ================================
+  # ======================
+  # 🔥 OLLAMA SIDECAR
+  # ======================
+  ollama:
+    image: ollama/ollama
+    container_name: ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    restart: always
+
+  # ======================
+  # AGENT
+  # ======================
   agent:
-    container_name: agent
     build:
       context: .
       dockerfile: Dockerfile
     depends_on:
       - neo4j
       - milvus
+      - ollama
     environment:
-      TZ: ${TZ}
-      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE}
+      SPRING_PROFILES_ACTIVE: prd
+
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
 
       MILVUS_HOST: milvus
-      MILVUS_PORT: 19530
-
       NEO4J_URI: bolt://neo4j:7687
-      NEO4J_USERNAME: ${NEO4J_USERNAME}
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
 
-      JAVA_TOOL_OPTIONS: ${JAVA_TOOL_OPTIONS}
+      # 🔥 关键：直接连 sidecar
+      OLLAMA_BASE_URL: http://ollama:11434
+
     ports:
       - "8080:8080"
     restart: always
-
 
 volumes:
   etcd_data:
   minio_data:
   milvus_data:
   neo4j_data:
+  ollama_data:

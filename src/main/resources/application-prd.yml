@@ -14,7 +14,7 @@ spring:
 
     # Chat -> DeepSeek（OpenAI 兼容）
     openai:
-      api-key: sk-0814706a3e094203904230a30c96e3a9
+      api-key: ${OPENAI_API_KEY}
       base-url: https://api.deepseek.com
       chat:
         options:
@@ -23,7 +23,7 @@ spring:
 
     # Embedding -> Ollama（本地）
     ollama:
-      base-url: http://localhost:11434
+      base-url: http://host.docker.internal:11434
       embedding:
         options:
           model: nomic-embed-text
