@@ -61,22 +61,6 @@ DETACH DELETE n;
 MATCH (n:ClaimSlot)
 DETACH DELETE n;
 
-
-
-                                        公网IP
-                                           ↓
-                                        Nginx（80/443）
-                                           ↓
-                                        Agent SpringBoot (Docker)
-                                           ↓
-                                        Neo4j (Docker)
-
-                                        #服务器内打包
-                                        cd ~/agent-stack
-                                        git pull
-                                        mvn clean package -DskipTests
-                                        sudo docker compose up -d --build
-
 //清空所有节点
 CALL apoc.periodic.iterate(
   "MATCH (n) RETURN n",
@@ -84,4 +68,33 @@ CALL apoc.periodic.iterate(
   {batchSize:10000}
 );
 
+
+
+
+我在没有 Kubernetes 的情况下，用 Docker Compose 实现了 Blue-Green Deployment，
+通过 Nginx reload 实现 0 downtime 切换，同时保持 Sidecar LLM 推理和向量库一致性。
+
+部署流程：
+① 拉代码
+    cd /agent-stack
+    git pull
+    mvn clean package -DskipTests
+
+② build 绿
+    docker compose up -d --build agent_green
+
+③ 验证绿
+    curl http://127.0.0.1:8082/actuator/health
+    返回 "status":"UP"
+
+④ 切流量
+    ./deploy/switch.sh green
+
+⑤ 留回滚
+    如果发现新版本有问题
+    执行 ./deploy/switch.sh blue
+    直接秒回旧版本
+
+
+chmod +x deploy/switch.sh
 
