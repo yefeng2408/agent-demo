@@ -1,3 +1,4 @@
+/*
 package com.yef.agent.memory;
 
 import org.springframework.context.annotation.Profile;
@@ -110,13 +111,15 @@ public class BeliefStore {
         return BigDecimal.valueOf(v).setScale(3, java.math.RoundingMode.HALF_UP);
     }
 
-    /**
+    */
+/**
      * 提升置信度
      * @param userId
      * @param proposition
      * @param delta
      * @param targetStatus
-     */
+     *//*
+
     public void bumpConfidence(String userId, String proposition, double delta, EpistemicStatus targetStatus) {
         Optional<BeliefRow> opt = findByUserAndProposition(userId, proposition);
         if (opt.isEmpty()) return;
@@ -131,12 +134,14 @@ public class BeliefStore {
                 newConf
         );
     }
-    /**
+    */
+/**
      * 压低置信度
      * @param userId
      * @param predicateName
      * @param floor
-     */
+     *//*
+
     public void downscaleAllSpecifics(String userId, String predicateName, double floor) {
         String sql = """
                     SELECT id,user_id, proposition, surface, epistemic_status, confidence,updated_at,created_at
@@ -164,3 +169,4 @@ public class BeliefStore {
     }
 
 }
+*/
