@@ -48,8 +48,18 @@ neo4j:
 #migration:
 #  enabled: true
 #  batchSize: 200
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
 milvus:
   host: milvus
+
 
 logging:
   level:
