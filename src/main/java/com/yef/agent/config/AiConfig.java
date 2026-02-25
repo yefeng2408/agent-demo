@@ -1,10 +1,7 @@
 package com.yef.agent.config;
 
-import com.yef.agent.advisor.PersonaMemoryAdvisor;
 import io.milvus.client.MilvusServiceClient;
 import io.milvus.param.ConnectParam;
-import io.milvus.param.IndexType;
-import io.milvus.param.MetricType;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.embedding.EmbeddingModel;

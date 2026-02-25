@@ -1,3 +1,4 @@
+/*
 package com.yef.agent.advisor;
 
 import com.yef.agent.memory.*;
@@ -42,7 +43,9 @@ public class UserPersonaAdvisor {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    /** 对外入口：在你原来 Advisor 的 afterResponse / advise 里调用 */
+    */
+/** 对外入口：在你原来 Advisor 的 afterResponse / advise 里调用 *//*
+
     public void onTurn(String userId, String userText, String aiText) {
         log.info("[Persona] onTurn userId={}, userText={}, aiText={}", userId, userText, aiText);
         // 1) LLM 抽取 “认知主张（belief claim）”
@@ -136,11 +139,13 @@ public class UserPersonaAdvisor {
         );
     }
 
-    /**
+    */
+/**
      * 旧认知和新认知之间的状态同步（一致性传播） 否认旧事物同时也要肯定新事物，反之同理
      * @param userId
      * @param claim
-     */
+     *//*
+
     private void propagateConsistency(String userId, ClaimExtractionResult.Claim claim) {
         PredicateKey key = PredicateKey.parse(claim.proposition());
 
@@ -243,4 +248,4 @@ public class UserPersonaAdvisor {
         """;
         return jdbcTemplate.query(sql, BeliefStore.beliefRowMapper, userId);
     }
-}
+}*/

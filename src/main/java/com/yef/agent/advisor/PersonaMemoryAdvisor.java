@@ -1,3 +1,4 @@
+/*
 package com.yef.agent.advisor;
 
 import org.springframework.context.annotation.Profile;
@@ -15,13 +16,17 @@ public class PersonaMemoryAdvisor {
         this.userPersonaAdvisor = userPersonaAdvisor;
     }
 
-    /** 请求前：记录 userText（可选） */
+    */
+/** 请求前：记录 userText（可选） *//*
+
     public void onRequest(String userText, Map<String, Object> metadata) {
         metadata.put("lastUserText", userText);
     }
 
-    /** 响应后：真正做“认知管理” */
+    */
+/** 响应后：真正做“认知管理” *//*
+
     public void onResponse(String userId, String userText, String aiText) {
         userPersonaAdvisor.onTurn(userId, userText, aiText);
     }
-}
+}*/

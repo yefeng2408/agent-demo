@@ -1,17 +1,12 @@
 package com.yef.agent.chat;
 
 import com.alibaba.fastjson.JSON;
-import com.yef.agent.advisor.PersonaMemoryAdvisor;
-import com.yef.agent.advisor.UserPersonaAdvisor;
 import com.yef.agent.component.KeyCodec;
 import com.yef.agent.graph.ExtractedRelation;
 import com.yef.agent.graph.answer.AnswerResult;
-import com.yef.agent.graph.answer.ClaimEvidence;
 import com.yef.agent.graph.answer.GraphAnswerer;
 import com.yef.agent.graph.answer.Neo4jGraphAnswerer;
 import com.yef.agent.graph.eum.InteractionType;
-import com.yef.agent.graph.eum.PredicateType;
-import com.yef.agent.graph.eum.Quantifier;
 import com.yef.agent.graph.extract.*;
 import com.yef.agent.graph.llm.LlmPolisher;
 import com.yef.agent.graph.writer.Neo4jGraphWriter;
@@ -22,8 +17,6 @@ import com.yef.agent.repository.ClaimEvidenceRepository;
 import com.yef.agent.repository.StatusTransitionRepository;
 import com.yef.agent.service.ClaimConfidenceService;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
