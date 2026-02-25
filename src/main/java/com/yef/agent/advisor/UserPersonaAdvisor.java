@@ -7,11 +7,12 @@ import io.milvus.param.R;
 import io.milvus.param.dml.InsertParam;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import java.util.*;
 import static com.yef.agent.memory.EpistemicStatus.CONFIRMED;
-
+@Profile("legacy")
 @Slf4j
 @Component
 public class UserPersonaAdvisor {

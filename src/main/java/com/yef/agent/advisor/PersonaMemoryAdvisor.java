@@ -1,9 +1,11 @@
 package com.yef.agent.advisor;
 
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
 
+@Profile("legacy")
 @Component
 public class PersonaMemoryAdvisor {
 

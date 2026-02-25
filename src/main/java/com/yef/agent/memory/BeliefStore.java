@@ -1,5 +1,6 @@
 package com.yef.agent.memory;
 
+import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
@@ -8,6 +9,7 @@ import java.sql.ResultSet;
 import java.time.LocalDateTime;
 import java.util.*;
 
+@Profile("legacy")
 @Deprecated(forRemoval = true)
 @Repository
 public class BeliefStore {

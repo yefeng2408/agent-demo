@@ -37,9 +37,6 @@ import java.util.*;
 @RequestMapping("/chat")
 public class ChatController {
 
-    private final ChatClient personalChatClient;
-    private final PersonaMemoryAdvisor personaMemoryAdvisor;
-    private final UserPersonaAdvisor userPersonaAdvisor;
     private final Neo4jGraphAnswerer graphAnswerer;
     private final LlmPolisher llmPolisher;
     private final Neo4jGraphWriter neo4jGraphWriter;
@@ -47,18 +44,13 @@ public class ChatController {
     private final EpistemicRouter epistemicRouter;
 
 
-    public ChatController(@Qualifier("personalChatClient") ChatClient personalChatClient,
-                          PersonaMemoryAdvisor personaMemoryAdvisor,
-                          UserPersonaAdvisor userPersonaAdvisor,
+    public ChatController(
                           Neo4jGraphAnswerer graphAnswerer,
                           LlmPolisher llmPolisher,
                           Neo4jGraphWriter neo4jGraphWriter,
                           LlmInteractionAdapter llmInteractionAdapter,
                           EpistemicRouter epistemicRouter
     ) {
-        this.personalChatClient = personalChatClient;
-        this.personaMemoryAdvisor = personaMemoryAdvisor;
-        this.userPersonaAdvisor = userPersonaAdvisor;
         this.graphAnswerer = graphAnswerer;
         this.llmPolisher = llmPolisher;
         this.neo4jGraphWriter = neo4jGraphWriter;
@@ -122,9 +114,10 @@ public class ChatController {
         }
 
         // ASK path
+        String explain=null;
         AnswerResult graphAnswer = graphAnswerer.answer(userId,msg);
         if (graphAnswer.decision() != null) {
-            String explain = llmPolisher.explain(graphAnswer);
+            explain = llmPolisher.explain(graphAnswer);
             if (graphAnswer.relation() != null) {
                 neo4jGraphWriter.writeAnswer(
                         userId,
@@ -133,10 +126,10 @@ public class ChatController {
                         explain);
             }
             log.info("3---->AgentResponse result:{}", JSON.toJSONString(new AgentResponse(explain, graphAnswer)));
-            return new AgentResponse(explain, graphAnswer);
         }
+        return new AgentResponse(explain, graphAnswer);
 
-        // fallback to LLM
+/*        // fallback to LLM
         Map<String, Object> metadata = new HashMap<>();
         metadata.put("readOnly", true);
         //metadata.put("disableClaimWrite", true);
@@ -164,7 +157,7 @@ public class ChatController {
         // 2.4 响应后处理（⚠️ 这里以后会被 GraphExtraction 替换）
         personaMemoryAdvisor.onResponse(userId, msg, answer);
         log.info("4---->AgentResponse result:{}", JSON.toJSONString(new AgentResponse(answer, graphAnswer)));
-        return new AgentResponse(answer, graphAnswer);
+        return new AgentResponse(answer, graphAnswer);*/
     }
 }
 
