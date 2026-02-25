@@ -74,15 +74,15 @@ CALL apoc.periodic.iterate(
 我在没有 Kubernetes 的情况下，用 Docker Compose 实现了 Blue-Green Deployment，
 通过 Nginx reload 实现 0 downtime 切换，同时保持 Sidecar LLM 推理和向量库一致性。
 
-部署流程：
+部署以及验证服务是否健康流程：
 ① 拉代码
     cd agent-stack
     git pull
 
-② build 绿
-    #docker compose up -d --build agent_green
-    docker compose build agent_green
-    docker compose up -d --build
+② 首次部署启动容器
+docker compose up -d nginx neo4j minio etcd milvus ollama ollama-init
+./deploy/deploy.sh
+ 后续每次上线，直接：./deploy/deploy.sh
 
 ③ 验证绿
     curl http://127.0.0.1:8082/actuator/health
@@ -96,5 +96,5 @@ CALL apoc.periodic.iterate(
     执行 ./deploy/switch.sh blue
     直接秒回旧版本
 
-chmod +x deploy/switch.sh
+
 
