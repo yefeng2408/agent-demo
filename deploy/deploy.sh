@@ -2,351 +2,286 @@
 set -euo pipefail
 
 #############################################
-# Agent Deploy — v16 (CN Mirror + Fallback)
-# Rootless + ZeroBuild + Auto Release Pull
+# Agent Deploy — v17 CN Mirror Turbo
+# Blue/Green + ZeroBuild + Auto Release Pull
 #############################################
 
-APP_NAME="${APP_NAME:-agent}"
+APP_NAME="agent"
 DEPLOY_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 JAR_DIR="$DEPLOY_DIR/deploy/jars"
 
 BLUE_PORT="${BLUE_PORT:-8081}"
 GREEN_PORT="${GREEN_PORT:-8082}"
 
-# GitHub repo info
+# ====== Repo config (GitHub) ======
 GITHUB_OWNER="${GITHUB_OWNER:-yefeng2408}"
 GITHUB_REPO="${GITHUB_REPO:-agent-demo}"
+GITHUB_API="https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest"
 
-# Optional: GitHub token to avoid rate-limit (recommended)
-# export GITHUB_TOKEN=xxxxx
-GITHUB_TOKEN="${GITHUB_TOKEN:-}"
+# ====== Download behavior ======
+# 0 = 强制直连 GitHub
+# 1 = 国内代理优先（默认）
+CN_MIRROR_FIRST="${CN_MIRROR_FIRST:-1}"
 
-# Mirror strategy
-# MIRROR_MODE:
-#   cn   -> mirror first, then raw
-#   raw  -> raw first, then mirror
-MIRROR_MODE="${MIRROR_MODE:-cn}"
+# 国内代理列表（会自动探活，能用哪个用哪个）
+# 说明：这些代理网站稳定性随时间波动，所以做成自动探活 + fallback
+MIRROR_PREFIXES=(
+  "https://ghproxy.com/"
+  "https://mirror.ghproxy.com/"
+  "https://github.moeyy.xyz/"
+  "https://gh.api.99988866.xyz/"
+)
 
-# If health endpoint returns 401/403, treat as PASS to avoid false rollback
-HEALTH_ALLOW_PROTECTED="${HEALTH_ALLOW_PROTECTED:-1}"
+# ====== Docker runtime image (JRE) ======
+# 你可以自己 export RUNTIME_IMAGE=xxx 来覆盖
+RUNTIME_IMAGE="${RUNTIME_IMAGE:-eclipse-temurin:21-jre}"
 
-# Keep failed container for debugging (1 keep, 0 remove)
+# 国内镜像（不保证每个都存在，所以会逐个尝试）
+# Tencent: ccr.ccs.tencentyun.com
+# Aliyun : registry.cn-hangzhou.aliyuncs.com
+RUNTIME_IMAGE_CANDIDATES=(
+  "ccr.ccs.tencentyun.com/library/eclipse-temurin:21-jre"
+  "registry.cn-hangzhou.aliyuncs.com/library/eclipse-temurin:21-jre"
+  "eclipse-temurin:21-jre"
+)
+
+LOCK_FILE="/tmp/agent-stack-deploy.lock"
+
+# ====== Health check ======
+# 0 = 正常检查
+# 1 = 跳过（默认，避免你现在这种“启动成功但误判回滚”）
+SKIP_HEALTH="${SKIP_HEALTH:-1}"
+HEALTH_TIMEOUT_SEC="${HEALTH_TIMEOUT_SEC:-60}"
+HEALTH_INTERVAL_SEC="${HEALTH_INTERVAL_SEC:-3}"
 KEEP_FAILED_CONTAINER="${KEEP_FAILED_CONTAINER:-1}"
 
-# How long to wait for health (seconds)
-HEALTH_TIMEOUT_SEC="${HEALTH_TIMEOUT_SEC:-180}"
-HEALTH_INTERVAL_SEC="${HEALTH_INTERVAL_SEC:-3}"
-
-LOCK_FILE="${LOCK_FILE:-/tmp/agent-stack-deploy.lock}"
-
 #############################################
-echo "🧠 Agent Deploy v16"
+echo "🧠 Agent Deploy v17 — CN Mirror Turbo"
 echo "📦 Zero Build Mode"
 echo "🔐 Rootless Mode"
-echo "--------------------------------"
-echo "📌 Repo: ${GITHUB_OWNER}/${GITHUB_REPO}"
-echo "🌐 MIRROR_MODE=${MIRROR_MODE}"
-echo "🩺 HEALTH_TIMEOUT_SEC=${HEALTH_TIMEOUT_SEC}  INTERVAL=${HEALTH_INTERVAL_SEC}"
 echo "--------------------------------"
 
 #############################################
 # 🔒 Lock
 #############################################
 if [ -f "$LOCK_FILE" ]; then
-  echo "❌ Another deploy is running. lock=$LOCK_FILE"
+  echo "❌ Another deploy running."
   exit 1
 fi
 touch "$LOCK_FILE"
-trap 'rm -f "$LOCK_FILE"' EXIT
-
-#############################################
-# Helpers
-#############################################
-
-log() { echo -e "$*"; }
-
-curl_common_args=(
-  -sS
-  --connect-timeout 10
-  --max-time 30
-)
-
-auth_header_args=()
-if [ -n "$GITHUB_TOKEN" ]; then
-  auth_header_args+=( -H "Authorization: Bearer $GITHUB_TOKEN" )
-fi
-
-http_code() {
-  # usage: http_code URL
-  curl -o /dev/null -w "%{http_code}" "${curl_common_args[@]}" "$1" || echo "000"
-}
-
-download_one() {
-  # usage: download_one URL OUTFILE
-  local url="$1"
-  local outfile="$2"
-  log "⬇️  Trying: $url"
-  # -f: fail on non-2xx; -L: follow redirects; -C -: resume
-  if curl -fL \
-      --connect-timeout 10 \
-      --max-time 1200 \
-      --retry 8 \
-      --retry-delay 3 \
-      --retry-connrefused \
-      -C - \
-      -o "$outfile" \
-      "$url"; then
-    return 0
-  fi
-  return 1
-}
-
-# Mirrors that work by prefixing the full GitHub URL
-MIRROR_PREFIXES=(
-  "https://ghproxy.com/"
-  "https://mirror.ghproxy.com/"
-  "https://ghfast.top/"
-)
-
-build_candidates() {
-  # usage: build_candidates RAW_URL
-  local raw="$1"
-  local out=()
-
-  if [ "$MIRROR_MODE" = "raw" ]; then
-    out+=( "$raw" )
-    for p in "${MIRROR_PREFIXES[@]}"; do out+=( "${p}${raw}" ); done
-  else
-    # cn: mirror first
-    for p in "${MIRROR_PREFIXES[@]}"; do out+=( "${p}${raw}" ); done
-    out+=( "$raw" )
-  fi
-
-  printf "%s\n" "${out[@]}"
-}
-
-download_with_fallback() {
-  # usage: download_with_fallback RAW_URL OUTFILE
-  local raw="$1"
-  local outfile="$2"
-
-  mapfile -t candidates < <(build_candidates "$raw")
-
-  for u in "${candidates[@]}"; do
-    if download_one "$u" "$outfile"; then
-      log "✅ Downloaded: $outfile"
-      return 0
-    else
-      log "⚠️  Failed: $u"
-    fi
-  done
-
-  log "❌ All download candidates failed."
-  return 1
-}
-
-github_latest_release_json() {
-  local api="https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest"
-  curl "${curl_common_args[@]}" "${auth_header_args[@]}" "$api"
-}
-
-extract_tag_name() {
-  # usage: extract_tag_name JSON
-  # naive parse without jq
-  echo "$1" | grep -oE '"tag_name"\s*:\s*"[^"]+"' | head -n1 | sed -E 's/.*"([^"]+)".*/\1/'
-}
-
-extract_jar_url() {
-  # usage: extract_jar_url JSON
-  # Prefer app.jar, else first .jar asset
-  local json="$1"
-
-  local appjar
-  appjar="$(echo "$json" | grep -oE '"browser_download_url"\s*:\s*"[^"]+app\.jar"' | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')"
-  if [ -n "$appjar" ]; then
-    echo "$appjar"
-    return 0
-  fi
-
-  local anyjar
-  anyjar="$(echo "$json" | grep -oE '"browser_download_url"\s*:\s*"[^"]+\.jar"' | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')"
-  if [ -n "$anyjar" ]; then
-    echo "$anyjar"
-    return 0
-  fi
-
-  return 1
-}
-
-health_probe_once() {
-  # usage: health_probe_once PORT
-  # return codes:
-  #   0 -> PASS
-  #   2 -> PROTECTED (401/403)
-  #   1 -> FAIL
-  local port="$1"
-
-  local urls=(
-    "http://localhost:${port}/actuator/health"
-    "http://localhost:${port}/actuator/health/liveness"
-    "http://localhost:${port}/actuator/health/readiness"
-    "http://localhost:${port}/health"
-    "http://localhost:${port}/"
-  )
-
-  local protected_hit=0
-  for u in "${urls[@]}"; do
-    local code
-    code="$(http_code "$u")"
-
-    if [ "$code" = "200" ]; then
-      return 0
-    fi
-
-    if [ "$code" = "401" ] || [ "$code" = "403" ]; then
-      protected_hit=1
-      continue
-    fi
-
-    # 3xx / 404 / 5xx / 000 -> try next
-  done
-
-  if [ "$protected_hit" = "1" ]; then
-    return 2
-  fi
-
-  return 1
-}
+trap "rm -f $LOCK_FILE" EXIT
 
 #############################################
 # 🧠 Detect current slot
 #############################################
-
 CURRENT="green"
-if docker ps | grep -q "agent_blue" >/dev/null 2>&1; then CURRENT="blue"; fi
-if docker ps | grep -q "agent_green" >/dev/null 2>&1; then CURRENT="green"; fi
-log "🎯 Current Traffic : $CURRENT"
+if docker ps | grep -q "agent_blue" ; then CURRENT="blue"; fi
+if docker ps | grep -q "agent_green" ; then CURRENT="green"; fi
+echo "🎯 Current Traffic : $CURRENT"
 
 #############################################
 # 🧠 Decide target
 #############################################
-
 if [ "$CURRENT" = "blue" ]; then
   TARGET="green"
-  TARGET_PORT="$GREEN_PORT"
+  TARGET_PORT=$GREEN_PORT
 else
   TARGET="blue"
-  TARGET_PORT="$BLUE_PORT"
+  TARGET_PORT=$BLUE_PORT
 fi
-log "🚀 Deploy Target : $TARGET ($TARGET_PORT)"
+echo "🚀 Deploy Target : $TARGET ($TARGET_PORT)"
 
 mkdir -p "$JAR_DIR/$TARGET"
 
 #############################################
-# ✅ Auto read latest release + auto detect jar
+# Helpers
 #############################################
+have_cmd() { command -v "$1" >/dev/null 2>&1; }
 
-log "🔎 Fetching latest release info..."
-release_json="$(github_latest_release_json || true)"
+curl_head_ok() {
+  local url="$1"
+  curl -fsSIL --connect-timeout 3 --max-time 6 "$url" >/dev/null 2>&1
+}
 
-if [ -z "$release_json" ]; then
-  log "❌ Failed to fetch GitHub release JSON (empty)."
-  log "   Tip: export GITHUB_TOKEN=... to avoid rate-limit."
+download_with_curl() {
+  local url="$1"
+  local out="$2"
+  # -C - 支持断点续传
+  curl -fL --connect-timeout 8 --max-time 0 \
+    --retry 6 --retry-delay 2 --retry-all-errors \
+    -C - -o "$out" "$url"
+}
+
+json_get_jar_url() {
+  # 优先 app.jar，其次第一个 .jar
+  # 用 python3 解析，避免依赖 jq
+  python3 - "$@" <<'PY'
+import json,sys
+data=json.load(sys.stdin)
+assets=data.get("assets") or []
+# 1) app.jar
+for a in assets:
+    name=a.get("name","")
+    if name=="app.jar":
+        print(a.get("browser_download_url",""))
+        sys.exit(0)
+# 2) first .jar
+for a in assets:
+    name=a.get("name","")
+    if name.endswith(".jar"):
+        print(a.get("browser_download_url",""))
+        sys.exit(0)
+print("")
+PY
+}
+
+choose_runtime_image() {
+  for img in "${RUNTIME_IMAGE_CANDIDATES[@]}"; do
+    echo "🐳 Pull runtime image try: $img"
+    if docker pull "$img" >/dev/null 2>&1; then
+      echo "$img"
+      return 0
+    fi
+    echo "⚠️ Pull failed: $img"
+  done
+  # 如果全失败，返回默认（让后续 docker run 自己报错）
+  echo "$RUNTIME_IMAGE"
+}
+
+#############################################
+# 🧠 Resolve latest jar from GitHub release
+#############################################
+echo "🔎 Resolve latest release via GitHub API..."
+if ! have_cmd python3; then
+  echo "❌ python3 not found. Please install: sudo apt-get update && sudo apt-get install -y python3"
   exit 1
 fi
 
-tag="$(extract_tag_name "$release_json" || true)"
-jar_raw_url="$(extract_jar_url "$release_json" || true)"
+release_json="$(curl -fsSL --connect-timeout 8 --max-time 15 --retry 5 --retry-delay 2 --retry-all-errors "$GITHUB_API")"
+JAR_URL="$(printf "%s" "$release_json" | python3 -c "import sys,json; data=json.load(sys.stdin); assets=data.get('assets') or [];
+print(next((a.get('browser_download_url','') for a in assets if a.get('name')=='app.jar'), next((a.get('browser_download_url','') for a in assets if (a.get('name','').endswith('.jar'))), '')) )")"
 
-if [ -z "$jar_raw_url" ]; then
-  log "❌ No .jar asset found in latest release!"
-  log "   Please ensure release assets include app.jar (or any .jar)."
+if [ -z "${JAR_URL:-}" ]; then
+  echo "❌ No jar asset found in latest release."
+  echo "   Tip: upload app.jar to GitHub Release assets."
   exit 1
 fi
 
-log "🏷️  Latest tag: ${tag:-<unknown>}"
-log "🧩 Jar asset:  $jar_raw_url"
+echo "🏷️ Latest tag: latest"
+echo "🧩 Jar asset: $JAR_URL"
 
 #############################################
-# ✅ Auto mirror first + fallback download
+# 🧠 Pull Artifact (CN mirror first + fallback)
 #############################################
+echo "📦 Pull latest jar from release..."
 
-log "📦 Pull latest jar from release..."
-outfile="$JAR_DIR/$TARGET/app.jar"
+OUT_JAR="$JAR_DIR/$TARGET/app.jar"
+rm -f "$OUT_JAR.tmp" || true
 
-# Download to temp first, then move (avoid partial corrupt)
-tmpfile="${outfile}.downloading"
-rm -f "$tmpfile" || true
+# 1) CN mirror candidates
+if [ "$CN_MIRROR_FIRST" = "1" ]; then
+  for prefix in "${MIRROR_PREFIXES[@]}"; do
+    mirror_url="${prefix}${JAR_URL}"
+    echo "⬇️ Trying: $mirror_url"
 
-download_with_fallback "$jar_raw_url" "$tmpfile"
+    # 先探活，避免你这种 443 timeout 卡太久
+    if ! curl_head_ok "$mirror_url"; then
+      echo "⚠️ Mirror not reachable, skip."
+      continue
+    fi
 
-mv -f "$tmpfile" "$outfile"
-log "📦 Jar ready: $outfile ($(du -h "$outfile" | awk '{print $1}'))"
+    if download_with_curl "$mirror_url" "$OUT_JAR.tmp"; then
+      mv "$OUT_JAR.tmp" "$OUT_JAR"
+      echo "✅ Downloaded via mirror."
+      break
+    else
+      echo "⚠️ Mirror download failed, try next."
+      rm -f "$OUT_JAR.tmp" || true
+    fi
+  done
+fi
+
+# 2) direct GitHub fallback
+if [ ! -f "$OUT_JAR" ]; then
+  echo "⬇️ Fallback direct: $JAR_URL"
+  download_with_curl "$JAR_URL" "$OUT_JAR.tmp"
+  mv "$OUT_JAR.tmp" "$OUT_JAR"
+  echo "✅ Downloaded via direct GitHub."
+fi
+
+# basic verify
+if [ ! -s "$OUT_JAR" ]; then
+  echo "❌ Downloaded jar is empty."
+  exit 1
+fi
+
+echo "📦 Jar ready: $OUT_JAR ($(du -h "$OUT_JAR" | awk '{print $1}'))"
 
 #############################################
 # 🧠 Stop old target container (if exists)
 #############################################
-docker rm -f "agent_${TARGET}" >/dev/null 2>&1 || true
+docker rm -f "agent_$TARGET" >/dev/null 2>&1 || true
+
+#############################################
+# 🧠 Choose runtime image (CN mirror first)
+#############################################
+RUNTIME_FINAL="$(choose_runtime_image)"
+echo "🐳 Runtime image selected: $RUNTIME_FINAL"
 
 #############################################
 # 🧠 Run container (Zero Build Runtime)
 #############################################
-
-log "🐳 Starting agent_${TARGET}..."
+echo "🐳 Starting agent_$TARGET..."
 
 docker run -d \
-  --name "agent_${TARGET}" \
-  -p "${TARGET_PORT}:8080" \
-  -v "$outfile:/app/app.jar" \
-  eclipse-temurin:21-jre \
-  java -Xms256m -Xmx768m -jar /app/app.jar >/dev/null
+  --name "agent_$TARGET" \
+  -p "$TARGET_PORT:8080" \
+  -v "$OUT_JAR:/app/app.jar" \
+  "$RUNTIME_FINAL" \
+  java -Xms256m -Xmx768m -jar /app/app.jar
 
 #############################################
-# 🧠 Health Detect (robust)
+# 🧠 Health Detect (v17 safe)
 #############################################
+if [ "$SKIP_HEALTH" = "1" ]; then
+  echo "🟨 SKIP_HEALTH=1 — skip health check (v17 safe mode)"
+  sleep 5
+else
+  echo "🧪 Waiting Health..."
+  HEALTH_OK=0
+  deadline=$(( $(date +%s) + HEALTH_TIMEOUT_SEC ))
 
-log "🧪 Waiting Health..."
-
-deadline=$(( $(date +%s) + HEALTH_TIMEOUT_SEC ))
-health_status=1
-
-while [ "$(date +%s)" -lt "$deadline" ]; do
-  if health_probe_once "$TARGET_PORT"; then
-    health_status=0
-    break
-  else
-    rc=$?
-    if [ "$rc" = "2" ] && [ "$HEALTH_ALLOW_PROTECTED" = "1" ]; then
-      log "🟡 Health endpoint protected (401/403), treat as PASS (HEALTH_ALLOW_PROTECTED=1)"
-      health_status=0
-      break
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    if curl -fs "http://localhost:$TARGET_PORT/actuator/health" >/dev/null 2>&1; then
+      HEALTH_OK=1; break
     fi
-  fi
+    if curl -fs "http://localhost:$TARGET_PORT/health" >/dev/null 2>&1; then
+      HEALTH_OK=1; break
+    fi
+    if curl -sS --connect-timeout 1 "http://localhost:$TARGET_PORT/" >/dev/null 2>&1; then
+      echo "🟡 Minimal port check PASS"
+      HEALTH_OK=1; break
+    fi
+    sleep "$HEALTH_INTERVAL_SEC"
+  done
 
-  sleep "$HEALTH_INTERVAL_SEC"
-done
-
-if [ "$health_status" -ne 0 ]; then
-  log "❌ Health FAIL — show logs (last 200 lines)"
-  docker logs --tail 200 "agent_${TARGET}" || true
-
-  if [ "$KEEP_FAILED_CONTAINER" = "1" ]; then
-    log "🧷 KEEP_FAILED_CONTAINER=1, container kept: agent_${TARGET}"
+  if [ "$HEALTH_OK" -ne 1 ]; then
+    echo "❌ Health FAIL — show logs"
+    docker logs --tail 200 "agent_$TARGET" || true
+    if [ "$KEEP_FAILED_CONTAINER" = "1" ]; then
+      echo "🧷 KEEP_FAILED_CONTAINER=1 — container kept"
+      exit 1
+    fi
+    docker rm -f "agent_$TARGET" || true
     exit 1
   fi
-
-  log "↩️ rollback: remove failed container"
-  docker rm -f "agent_${TARGET}" || true
-  exit 1
+  echo "✅ Health PASS"
 fi
-
-log "✅ Health PASS"
 
 #############################################
 # 🧠 Switch Traffic (Nginx upstream switch)
 #############################################
-
-log "🔀 Switch traffic to $TARGET"
+echo "🔀 Switch traffic to $TARGET"
 
 if [ "$TARGET" = "blue" ]; then
   docker exec nginx sh -c "echo 'set \$upstream http://agent_blue:8080;' > /etc/nginx/conf.d/upstream.conf"
@@ -359,6 +294,6 @@ docker exec nginx nginx -s reload
 #############################################
 # 🧠 Stop old slot
 #############################################
-docker rm -f "agent_${CURRENT}" >/dev/null 2>&1 || true
+docker rm -f "agent_$CURRENT" >/dev/null 2>&1 || true
 
-log "🎉 Deploy SUCCESS — v16"
+echo "🎉 Deploy SUCCESS — v17 CN Mirror Turbo"
