@@ -13,7 +13,7 @@ JAR_DIR="$DEPLOY_DIR/deploy/jars"
 BLUE_PORT=8081
 GREEN_PORT=8082
 
-RELEASE_URL="https://gitee.com/yf123456/agent-demo/releases/download/latest/app.jar"
+RELEASE_URL="https://github.com/yefeng2408/agent-demo/releases/download/latest/app.jar"
 
 LOCK_FILE="/tmp/agent-stack-deploy.lock"
 
