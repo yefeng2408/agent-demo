@@ -1,214 +1,150 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# =========================
-# v11 — Rootless SRE Deploy
-# =========================
-# Features:
-# - Rootless docker (no sudo) if user in docker group
-# - Safe git pull (auto stash / pop)
-# - BuildKit + buildx check
-# - Build timeout auto-kill (防卡死)
-# - Blue/Green deploy + smart health
-# - Auto rollback + rich logs (可观测)
-# - Minimal downtime
+echo "🔥 Deploy v13 — Zero-Build Ultra Fast Mode (no docker build, no mvn)"
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
+COMPOSE="docker compose"
+NGINX_CONTAINER="${NGINX_CONTAINER:-nginx}"
+
+BLUE_PORT=8081
+GREEN_PORT=8082
+
 LOCK_FILE="/tmp/agent-stack-deploy.lock"
-LOG_DIR="/var/log/agent-deploy"
-mkdir -p "$LOG_DIR" 2>/dev/null || true
-LOG_FILE="$LOG_DIR/deploy_$(date +%F_%H%M%S).log"
 
-# --- log helpers ---
-log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOG_FILE" ; }
-die() { log "❌ $*"; exit 1; }
+# jar 来源（你可以改成从 /target 或下载）
+JAR_SRC="${JAR_SRC:-$PROJECT_ROOT/target/agent-0.0.1-SNAPSHOT.jar}"
 
-# --- lock (atomic) ---
-exec 9>"$LOCK_FILE" || true
-if ! flock -n 9; then
-  die "Deploy is already running (lock=$LOCK_FILE)"
-fi
+BLUE_JAR="${PROJECT_ROOT}/deploy/jars/blue/app.jar"
+GREEN_JAR="${PROJECT_ROOT}/deploy/jars/green/app.jar"
 
-cleanup() {
-  local code=$?
-  log "🧹 cleanup (exit=$code)"
-}
-trap cleanup EXIT
+log(){ echo -e "[$(date '+%F %T')] $*"; }
 
-need() { command -v "$1" >/dev/null 2>&1 || die "Missing command: $1"; }
-need git
-need docker
+############################################
+# 🔒 Lock
+############################################
+exec 9>"$LOCK_FILE"
+flock -n 9 || { echo "🚫 deploy already running"; exit 1; }
 
-# --- docker permission check (rootless) ---
-if ! docker info >/dev/null 2>&1; then
-  cat <<'EOF' >&2
-❌ Docker daemon not accessible for current user.
-Fix (one-time):
-  sudo usermod -aG docker ubuntu
-  newgrp docker
-  docker ps
-EOF
+############################################
+# 🧼 Safe Pull（可按需关闭）
+############################################
+log "📦 Safe Pull..."
+git reset --hard HEAD
+git clean -fd
+git pull
+
+############################################
+# ✅ jar 检查
+############################################
+if [[ ! -f "$JAR_SRC" ]]; then
+  log "❌ JAR_SRC not found: $JAR_SRC"
+  log "👉 你需要先把 jar 放到这里，或把 JAR_SRC 指到正确路径"
   exit 1
 fi
 
-# --- Compose command ---
-COMPOSE="docker compose"
+############################################
+# 🎯 Current Traffic
+############################################
+ACTIVE=$(grep -q "$BLUE_PORT" deploy/nginx.conf && echo "blue" || echo "green")
 
-# --- BuildKit on ---
-export DOCKER_BUILDKIT=1
-export COMPOSE_DOCKER_CLI_BUILD=1
+if [[ "$ACTIVE" == "blue" ]]; then
+  TARGET="green"
+  TARGET_PORT=$GREEN_PORT
+  TARGET_JAR="$GREEN_JAR"
+  SRC_CONF="deploy/nginx.green.conf"
+else
+  TARGET="blue"
+  TARGET_PORT=$BLUE_PORT
+  TARGET_JAR="$BLUE_JAR"
+  SRC_CONF="deploy/nginx.blue.conf"
+fi
 
-# --- config ---
-SERVICE_BLUE="agent_blue"
-SERVICE_GREEN="agent_green"
-PORT_BLUE="8081"
-PORT_GREEN="8082"
-HEALTH_PATHS=("/actuator/health" "/actuator/health/liveness" "/health" "/")
-HEALTH_RETRY="${HEALTH_RETRY:-30}"
-HEALTH_SLEEP="${HEALTH_SLEEP:-2}"
-BUILD_TIMEOUT="${BUILD_TIMEOUT:-25m}"   # 防止卡死
-NO_CACHE="${NO_CACHE:-0}"
+SERVICE="agent_${TARGET}"
+OLD_SERVICE="agent_${ACTIVE}"
 
-# 你 nginx 的切流脚本（你项目里已有 switch.sh/ nginx.*.conf 就用它）
-SWITCH_SCRIPT="${PROJECT_ROOT}/deploy/switch.sh"
+log "🎯 Current Traffic : $ACTIVE"
+log "🚀 Deploy Target   : $TARGET ($TARGET_PORT)"
+log "📦 Jar Source      : $JAR_SRC"
+log "📌 Jar Target      : $TARGET_JAR"
 
-# --- detect current traffic by nginx active conf marker (你的实现不同可改这里) ---
-detect_current() {
-  # 简化：默认 current=blue；如果你 switch.sh 有状态文件，改为读状态文件更准
-  # 也可以：grep -q "agent_green" deploy/nginx.conf && echo green || echo blue
-  if [ -f "${PROJECT_ROOT}/deploy/nginx.conf" ] && grep -q "agent_green" "${PROJECT_ROOT}/deploy/nginx.conf"; then
-    echo "green"
-  else
-    echo "blue"
-  fi
-}
+############################################
+# 🏎 Ultra Fast Replace Jar（秒级）
+############################################
+mkdir -p "$(dirname "$TARGET_JAR")"
+cp -f "$JAR_SRC" "$TARGET_JAR"
 
-target_color() {
-  local current="$1"
-  if [ "$current" = "blue" ]; then echo "green"; else echo "blue"; fi
-}
+# 可选：显示版本戳（帮助确认不是 old jar）
+log "🔎 Jar timestamp:"
+ls -lah "$TARGET_JAR"
 
-# --- safe git pull (stash -> pull -> pop) ---
-safe_pull() {
-  log "📦 Safe Pull..."
-  local stashed=0
+############################################
+# ▶ 重启目标服务（不 build）
+############################################
+log "♻️ Restart $SERVICE ..."
+$COMPOSE up -d --no-deps "$SERVICE"
+$COMPOSE restart "$SERVICE"
 
-  if ! git diff --quiet || ! git diff --cached --quiet; then
-    stashed=1
-    log "🧳 Local changes detected, stashing..."
-    git stash push -u -m "auto-stash-before-deploy $(date +%F_%T)" >/dev/null
-  fi
-
-  # 你这边是 gitee，pull 时可能被 deploy.sh 本地改动挡住；stash 已解决
-  git pull --rebase
-
-  if [ "$stashed" = "1" ]; then
-    log "🎒 Restoring stash..."
-    if ! git stash pop >/dev/null; then
-      die "Stash pop conflict. Resolve manually."
+############################################
+# 🧠 Auto Health Detect
+############################################
+detect_health() {
+  local PORT=$1
+  local BASE="http://127.0.0.1:${PORT}"
+  local PATHS=("/actuator/health" "/health" "/ready" "/")
+  for p in "${PATHS[@]}"; do
+    if curl -fsS "${BASE}${p}" >/dev/null 2>&1; then
+      echo "$p"; return
     fi
-  fi
-
-  log "✅ Repo up to date: $(git rev-parse --short HEAD)"
-}
-
-# --- build with timeout + progress ---
-build_service() {
-  local svc="$1"
-  local args=()
-  if [ "$NO_CACHE" = "1" ]; then args+=(--no-cache); fi
-
-  log "🏗️  Building $svc (timeout=$BUILD_TIMEOUT, no_cache=$NO_CACHE)..."
-  # 防卡死：超时直接 kill
-  timeout --signal=KILL "$BUILD_TIMEOUT" \
-    $COMPOSE build --progress=plain "${args[@]}" "$svc" \
-    | tee -a "$LOG_FILE"
-}
-
-# --- start target container ---
-up_target() {
-  local color="$1"
-  local svc port
-  if [ "$color" = "blue" ]; then svc="$SERVICE_BLUE"; port="$PORT_BLUE"; else svc="$SERVICE_GREEN"; port="$PORT_GREEN"; fi
-
-  log "🚀 Starting $color ($svc :$port)..."
-  $COMPOSE up -d --no-deps "$svc" | tee -a "$LOG_FILE"
-}
-
-# --- smart health check ---
-health_check() {
-  local color="$1"
-  local port
-  if [ "$color" = "blue" ]; then port="$PORT_BLUE"; else port="$PORT_GREEN"; fi
-
-  log "🩺 Health checking $color on :$port ..."
-  for ((i=1; i<=HEALTH_RETRY; i++)); do
-    for p in "${HEALTH_PATHS[@]}"; do
-      if curl -fsS "http://127.0.0.1:${port}${p}" >/dev/null 2>&1; then
-        log "✅ Health OK: :$port$p"
-        return 0
-      fi
-    done
-    sleep "$HEALTH_SLEEP"
   done
-
-  log "❌ Health FAIL for $color. Showing last logs:"
-  local svc
-  if [ "$color" = "blue" ]; then svc="$SERVICE_BLUE"; else svc="$SERVICE_GREEN"; fi
-  $COMPOSE logs --tail=200 "$svc" | tee -a "$LOG_FILE"
-  return 1
+  echo ""
 }
 
-# --- switch traffic ---
-switch_traffic() {
-  local to="$1"
-  log "🔀 Switching traffic to: $to"
-  if [ -x "$SWITCH_SCRIPT" ]; then
-    "$SWITCH_SCRIPT" "$to" | tee -a "$LOG_FILE"
-  else
-    log "⚠️ switch.sh not found/executable; please wire traffic switch here."
+log "🧪 Detecting health endpoint ..."
+HEALTH_PATH=$(detect_health "$TARGET_PORT")
+
+if [[ -z "$HEALTH_PATH" ]]; then
+  log "❌ No health endpoint detected"
+  log "🧯 rollback: keep $ACTIVE"
+  $COMPOSE logs --tail=200 "$SERVICE" || true
+  $COMPOSE stop "$SERVICE" || true
+  exit 1
+fi
+
+log "✅ Health Path Detected : $HEALTH_PATH"
+
+############################################
+# ⏱ Health Check Loop
+############################################
+RETRY=20
+until curl -fsS "http://127.0.0.1:${TARGET_PORT}${HEALTH_PATH}" >/dev/null 2>&1
+do
+  log "⏳ waiting health on :${TARGET_PORT}${HEALTH_PATH} (left=$RETRY)"
+  sleep 2
+  ((RETRY--))
+  if [[ $RETRY -le 0 ]]; then
+    log "❌ Health FAIL => rollback"
+    $COMPOSE logs --tail=200 "$SERVICE" || true
+    $COMPOSE stop "$SERVICE" || true
+    exit 1
   fi
-}
+done
 
-# --- rollback ---
-rollback() {
-  local current="$1"
-  log "⏪ Rollback traffic to: $current"
-  switch_traffic "$current"
-}
+log "🎉 Health PASS"
 
-main() {
-  log "🚀 Deploy v11 (Rootless + BuildKit Cache + Timeout + Smart Health + Observability)"
-  safe_pull
+############################################
+# 🔀 Switch traffic
+############################################
+log "🔀 Switching traffic -> $TARGET"
+cp "$SRC_CONF" deploy/nginx.conf
+docker exec "$NGINX_CONTAINER" nginx -s reload
 
-  local current target
-  current="$(detect_current)"
-  target="$(target_color "$current")"
+############################################
+# 🧹 Stop old
+############################################
+log "🧹 Stop old service $OLD_SERVICE"
+$COMPOSE stop "$OLD_SERVICE" || true
 
-  log "🎯 Current Traffic: $current"
-  log "🎯 Deploy Target : $target"
-
-  # Build target only
-  if [ "$target" = "blue" ]; then
-    build_service "$SERVICE_BLUE"
-  else
-    build_service "$SERVICE_GREEN"
-  fi
-
-  # Start target
-  up_target "$target"
-
-  # Health
-  if health_check "$target"; then
-    switch_traffic "$target"
-    log "✅ Deploy SUCCESS -> traffic=$target"
-  else
-    log "❌ Deploy FAILED -> rollback"
-    rollback "$current"
-    die "Deploy failed, rolled back."
-  fi
-}
-
-main "$@"
+log "🚀 Deploy SUCCESS (v13 Ultra Fast)"

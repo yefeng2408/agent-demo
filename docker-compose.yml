@@ -33,7 +33,7 @@ services:
   agent_blue:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.runtime
     container_name: agent_blue
     environment:
       SPRING_PROFILES_ACTIVE: prd
@@ -46,6 +46,8 @@ services:
       SPRING_AI_OLLAMA_BASE_URL: http://ollama:11434
       SPRING_AI_OPENAI_API_KEY: ${OPENAI_API_KEY}
       JAVA_TOOL_OPTIONS: ${JAVA_TOOL_OPTIONS}
+    volumes:
+      - ./deploy/jars/blue/app.jar:/app/app.jar:ro
     ports:
       - "8081:8080"
     depends_on:
@@ -60,7 +62,7 @@ services:
   agent_green:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.runtime
     container_name: agent_green
     environment:
       SPRING_PROFILES_ACTIVE: prd
@@ -73,6 +75,8 @@ services:
       SPRING_AI_OLLAMA_BASE_URL: http://ollama:11434
       SPRING_AI_OPENAI_API_KEY: ${OPENAI_API_KEY}
       JAVA_TOOL_OPTIONS: ${JAVA_TOOL_OPTIONS}
+    volumes:
+      - ./deploy/jars/green/app.jar:/app/app.jar:ro
     ports:
       - "8082:8080"
     depends_on:

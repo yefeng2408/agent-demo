@@ -1,0 +1,9 @@
+FROM eclipse-temurin:21-jre
+
+WORKDIR /app
+# 只放启动脚本（不放 jar）
+COPY deploy/run.sh /app/run.sh
+RUN chmod +x /app/run.sh
+
+ENV JAVA_TOOL_OPTIONS="-Xms256m -Xmx768m -XX:MaxMetaspaceSize=256m -Dfile.encoding=UTF-8"
+ENTRYPOINT ["/app/run.sh"]
