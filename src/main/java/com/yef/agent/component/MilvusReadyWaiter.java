@@ -17,11 +17,8 @@ public class MilvusReadyWaiter {
     @Bean
     public ApplicationRunner waitMilvusRunner() {
         return args -> {
-
             log.info("🔥 Waiting Milvus {}:{} ...", host, 19530);
-
             int retry = 60;
-
             while (retry-- > 0) {
                 try (Socket socket = new Socket(host, 19530)) {
                     log.info("✅ Milvus Ready !");
@@ -30,7 +27,6 @@ public class MilvusReadyWaiter {
                     Thread.sleep(2000);
                 }
             }
-
             throw new RuntimeException("❌ Milvus not ready after retry");
         };
     }

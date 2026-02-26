@@ -1,0 +1,14 @@
+- name: Setup JDK 21.0.5
+  uses: actions/setup-java@v4
+  with:
+    distribution: temurin
+    java-version: '21.0.5'
+    cache: maven
+
+- name: ULTRA: Verify java version
+  run: |
+    java -version
+    java -version 2>&1 | head -n 1 | grep -q '21.0.5'
+
+- name: Build
+  run: ./mvnw -DskipTests clean package

@@ -102,3 +102,15 @@ docker compose up -d nginx neo4j minio etcd milvus ollama ollama-init
 删冲突临时文件：sudo rm -f /tmp/agent-stack-deploy.lock
 chmod +x deploy/switch.sh
 
+# 1) agent_blue 是否在运行
+docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | egrep "agent_blue|nginx"
+
+# 2) 看 agent_blue 日志最后 200 行（有没有异常栈/启动失败/卡住）
+docker logs --tail 200 agent_blue
+
+# 3) 宿主机直连 agent_blue（你映射的是 8081->8080）
+curl -v http://127.0.0.1:8081/actuator/health || true
+curl -v http://127.0.0.1:8081/health || true
+
+# 4) 从 nginx 容器里访问 agent_blue（验证 nginx 到后端的网络）
+docker exec nginx sh -lc "getent hosts agent_blue && curl -v http://agent_blue:8080/actuator/health || curl -v http://agent_blue:8080/health || true"
