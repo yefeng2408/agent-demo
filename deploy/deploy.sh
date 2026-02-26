@@ -38,6 +38,25 @@ echo "$CHANGED_FILES" | grep -q "^frontend/" && BUILD_FRONTEND=true || true
 echo "$CHANGED_FILES" | grep -q "^src/" && BUILD_BACKEND=true || true
 echo "$CHANGED_FILES" | grep -q "pom.xml" && BUILD_BACKEND=true || true
 
+
+#########################################
+# Ensure pnpm exists (Auto Install)
+#########################################
+
+if ! command -v pnpm >/dev/null 2>&1; then
+  echo "⚙️ pnpm not found — installing..."
+
+  # Node18+ 自带 corepack（最干净方案）
+  if command -v corepack >/dev/null 2>&1; then
+    corepack enable
+    corepack prepare pnpm@latest --activate
+  else
+    npm install -g pnpm
+  fi
+
+  echo "✅ pnpm installed."
+fi
+
 #########################################
 # STEP 2 — Frontend Build
 #########################################
