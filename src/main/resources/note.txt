@@ -85,6 +85,8 @@ CALL apoc.periodic.iterate(
 docker compose up -d nginx neo4j minio etcd milvus ollama ollama-init
 ./deploy/deploy.sh
  后续每次上线，直接：./deploy/deploy.sh
+ 不走sh脚本也可以直接执行compose文件：docker compose up -d （启动compose内所有应用） 部分应用：docker compose up -d agent_green
+
 
 ③ 验证绿
     curl http://127.0.0.1:8082/actuator/health
@@ -97,6 +99,13 @@ docker compose up -d nginx neo4j minio etcd milvus ollama ollama-init
     如果发现新版本有问题
     执行 ./deploy/switch.sh blue
     直接秒回旧版本
+
+6 停止docker所有容器
+    docker compose down
+  停止docker部分容器
+    docker compose stop agent_blue agent_green
+
+
 
 看日志：docker logs agent_green -f
 删冲突临时文件：sudo rm -f /tmp/agent-stack-deploy.lock
