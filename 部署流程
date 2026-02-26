@@ -7,3 +7,8 @@ docker restart nginx   或者 docker compose up -d --force-recreate nginx
 本地开发环境 mvn clean package
 scp app.jar blue/
 docker restart agent_blue
+
+#完全自动部署。用户自需要推送代码后 在服务器内执行deploy.sh即可
+deploy.sh --frontend-only
+deploy.sh --backend-only
+deploy.sh --full

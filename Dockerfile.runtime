@@ -1,9 +1,7 @@
-# FINAL Runtime Image — JDK 21.0.5
-FROM eclipse-temurin:21.0.5_11-jre
+FROM eclipse-temurin:21-jre-jammy
 
 WORKDIR /app
 
-# 由 deploy.sh 传入 jar
 ARG JAR_FILE=app.jar
 COPY ${JAR_FILE} /app/app.jar
 
