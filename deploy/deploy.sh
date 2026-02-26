@@ -78,11 +78,15 @@ else
   echo "⚡ Backend unchanged — skip build"
 fi
 
-LOCAL_JAR="$ROOT_DIR/target/agent-0.0.1-SNAPSHOT.jar"
+#LOCAL_JAR="$ROOT_DIR/target/agent-0.0.1-SNAPSHOT.jar"
+LOCAL_JAR="$(ls -1 target/*.jar | grep -v '\.original$' | head -n 1)"
 
 #########################################
 # STEP 4 — Detect current traffic
 #########################################
+
+# 确保基础设施容器都在（至少 nginx 得在）
+docker compose -f "$ROOT_DIR/docker-compose.yml" up -d nginx ollama neo4j minio etcd milvus
 
 if docker exec nginx sh -c "grep -q 'server agent_blue:8080;' /etc/nginx/nginx.conf"; then
   CURRENT="blue"
@@ -99,18 +103,22 @@ echo "🎯 Current=$CURRENT → Deploy=$TARGET"
 #########################################
 # STEP 5 — Build Immutable Image
 #########################################
+echo "📦 Detecting jar..."
+LOCAL_JAR="$(ls -1 target/*.jar | grep -v '\.original$' | head -n 1)"
 
-TS="$(date +%Y%m%d-%H%M%S)"
-TARGET_IMAGE="${APP_NAME}:${TARGET}-${TS}"
 
-echo "🐳 Building image $TARGET_IMAGE"
+if [ -z "${LOCAL_JAR:-}" ]; then
+  echo "❌ No jar found in target/"
+  exit 1
+fi
+
+echo "✅ Using jar: $LOCAL_JAR"
 
 docker build \
   -f "$ROOT_DIR/Dockerfile.runtime" \
-  --build-arg JAR_FILE="target/agent-0.0.1-SNAPSHOT.jar" \
+  --build-arg JAR_FILE="$LOCAL_JAR" \
   -t "$TARGET_IMAGE" \
   "$ROOT_DIR"
-
 #########################################
 # STEP 6 — Start new container
 #########################################
