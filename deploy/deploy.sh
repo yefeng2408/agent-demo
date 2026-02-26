@@ -59,15 +59,23 @@ if ! command -v pnpm >/dev/null 2>&1; then
   echo "⚙️ pnpm not found — installing..."
 
   # Node18+ 自带 corepack（最干净方案）
-  if command -v corepack >/dev/null 2>&1; then
-    corepack enable
-    corepack prepare pnpm@latest --activate
-  else
-    npm install -g pnpm
-  fi
+# 2️⃣ Ensure pnpm exists
+if ! command -v pnpm >/dev/null 2>&1; then
+  echo "⚙️ pnpm not found — installing (user-level)..."
+
+  export PNPM_HOME="$HOME/.local/share/pnpm"
+  export PATH="$PNPM_HOME:$PATH"
+
+  mkdir -p "$PNPM_HOME"
+
+  # 官方用户级安装（不会写 /usr/bin）
+  curl -fsSL https://get.pnpm.io/install.sh | sh -
+
+  export PATH="$PNPM_HOME:$PATH"
 
   echo "✅ pnpm installed: $(pnpm -v)"
 fi
+
 
 #########################################
 # STEP 2 — Frontend Build
