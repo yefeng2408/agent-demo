@@ -1,0 +1,9 @@
+前端：
+pnpm build
+scp -r dist ubuntu@服务器公网ip:/home/ubuntu/agent-stack/frontend/
+docker restart nginx
+
+后端：
+本地开发环境 mvn clean package
+scp app.jar blue/
+docker restart agent_blue
