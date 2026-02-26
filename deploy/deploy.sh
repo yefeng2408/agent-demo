@@ -46,20 +46,30 @@ echo "$CHANGED_FILES" | grep -q "pom.xml" && BUILD_BACKEND=true || true
 
 
 #########################################
-# Ensure Node / npm / pnpm exist (Auto Install)
+# Ensure pnpm exists (User-level install)
 #########################################
 
-# 1️⃣ Ensure node exists
-if ! command -v node >/dev/null 2>&1; then
-  echo "⚙️ Node.js not found — installing Node18 LTS..."
+if ! command -v pnpm >/dev/null 2>&1; then
+  echo "⚙️ pnpm not found — installing (user-level)..."
 
-  # Ubuntu 自动安装 Node18
-  curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-  sudo apt-get install -y nodejs
+  export PNPM_HOME="$HOME/.local/share/pnpm"
+  mkdir -p "$PNPM_HOME"
 
-  echo "✅ Node installed: $(node -v)"
+  curl -fsSL https://get.pnpm.io/install.sh | env PNPM_HOME="$PNPM_HOME" sh -
+
+  # ⭐⭐⭐ 关键：当前 shell 立刻生效
+  export PATH="$PNPM_HOME:$PATH"
+
+  # ⭐⭐⭐ 等待 pnpm binary 写入完成
+  sleep 2
+
+  if ! command -v pnpm >/dev/null 2>&1; then
+    echo "❌ pnpm install failed"
+    exit 1
+  fi
+
+  echo "✅ pnpm installed: $(pnpm -v)"
 fi
-
 #########################################
 # Ensure pnpm exists (User-level install)
 #########################################
