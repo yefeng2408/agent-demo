@@ -9,7 +9,16 @@ PORT_BLUE=8081
 PORT_GREEN=8082
 
 ROOT_DIR="$HOME/agent-stack"
+
 FRONTEND_DIR="$ROOT_DIR/frontend"
+
+COMPOSE_FILE="$ROOT_DIR/docker-compose.yml"
+
+if [ ! -f "$COMPOSE_FILE" ]; then
+  echo "❌ docker compose file not found: $COMPOSE_FILE"
+  echo "   (check file name: docker-compose.yml)"
+  exit 1
+fi
 
 FRONT_NET="agent-stack_frontend_net"
 BACK_NET="agent-stack_backend_net"
@@ -86,7 +95,7 @@ LOCAL_JAR="$(ls -1 target/*.jar | grep -v '\.original$' | head -n 1)"
 #########################################
 
 # 确保基础设施容器都在（至少 nginx 得在）
-docker compose -f "$ROOT_DIR/docker-compose.yml" up -d nginx ollama neo4j minio etcd milvus
+docker compose -f "$COMPOSE_FILE" up -d nginx ollama neo4j minio etcd milvus
 
 if docker exec nginx sh -c "grep -q 'server agent_blue:8080;' /etc/nginx/nginx.conf"; then
   CURRENT="blue"
@@ -103,6 +112,9 @@ echo "🎯 Current=$CURRENT → Deploy=$TARGET"
 #########################################
 # STEP 5 — Build Immutable Image
 #########################################
+TS="$(date +%Y%m%d-%H%M%S)"
+TARGET_IMAGE="${APP_NAME}:${TARGET}-${TS}"
+
 echo "📦 Detecting jar..."
 LOCAL_JAR="$(ls -1 target/*.jar | grep -v '\.original$' | head -n 1)"
 
@@ -113,6 +125,8 @@ if [ -z "${LOCAL_JAR:-}" ]; then
 fi
 
 echo "✅ Using jar: $LOCAL_JAR"
+
+echo "🐳 Building image: $TARGET_IMAGE"
 
 docker build \
   -f "$ROOT_DIR/Dockerfile.runtime" \
