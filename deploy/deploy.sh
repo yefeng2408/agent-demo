@@ -29,7 +29,13 @@ git pull
 # STEP 1 — Detect changes (Smart Build)
 #########################################
 
-CHANGED_FILES=$(git diff HEAD@{1} --name-only || true)
+# First deploy or no reflog → full build
+if git rev-parse HEAD@{1} >/dev/null 2>&1; then
+  CHANGED_FILES=$(git diff HEAD@{1} --name-only || true)
+else
+  echo "🆕 First deploy detected — FULL BUILD"
+  CHANGED_FILES="frontend/ src/ pom.xml"
+fi
 
 BUILD_FRONTEND=false
 BUILD_BACKEND=false
@@ -54,12 +60,10 @@ if ! command -v node >/dev/null 2>&1; then
   echo "✅ Node installed: $(node -v)"
 fi
 
-# 2️⃣ Ensure pnpm exists
-if ! command -v pnpm >/dev/null 2>&1; then
-  echo "⚙️ pnpm not found — installing..."
+#########################################
+# Ensure pnpm exists (User-level install)
+#########################################
 
-  # Node18+ 自带 corepack（最干净方案）
-# 2️⃣ Ensure pnpm exists
 if ! command -v pnpm >/dev/null 2>&1; then
   echo "⚙️ pnpm not found — installing (user-level)..."
 
@@ -68,7 +72,7 @@ if ! command -v pnpm >/dev/null 2>&1; then
 
   mkdir -p "$PNPM_HOME"
 
-  # 官方用户级安装（不会写 /usr/bin）
+  # 官方用户级安装（不会写 /usr/bin，不需要 sudo）
   curl -fsSL https://get.pnpm.io/install.sh | sh -
 
   export PATH="$PNPM_HOME:$PATH"
