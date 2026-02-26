@@ -40,9 +40,21 @@ echo "$CHANGED_FILES" | grep -q "pom.xml" && BUILD_BACKEND=true || true
 
 
 #########################################
-# Ensure pnpm exists (Auto Install)
+# Ensure Node / npm / pnpm exist (Auto Install)
 #########################################
 
+# 1️⃣ Ensure node exists
+if ! command -v node >/dev/null 2>&1; then
+  echo "⚙️ Node.js not found — installing Node18 LTS..."
+
+  # Ubuntu 自动安装 Node18
+  curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+  sudo apt-get install -y nodejs
+
+  echo "✅ Node installed: $(node -v)"
+fi
+
+# 2️⃣ Ensure pnpm exists
 if ! command -v pnpm >/dev/null 2>&1; then
   echo "⚙️ pnpm not found — installing..."
 
@@ -54,7 +66,7 @@ if ! command -v pnpm >/dev/null 2>&1; then
     npm install -g pnpm
   fi
 
-  echo "✅ pnpm installed."
+  echo "✅ pnpm installed: $(pnpm -v)"
 fi
 
 #########################################
