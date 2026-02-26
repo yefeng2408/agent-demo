@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { sendMessage } from './api/chatApi'
+import { sendMessage,resetUserData } from './api/chatApi'
 import { useAgentStore } from './store/agentStore'
 //import ClaimGraphPanel from './components/ClaimGraphPanel.vue'
 import HelloWorld from './components/HelloWorld.vue'
@@ -9,6 +9,14 @@ const store = useAgentStore()
 
 const input = ref('')
 const answer = ref('')
+const userId = 'debug-user'
+
+
+
+async function resetMemory() {
+  await resetUserData(userId)
+  answer.value = '操作成功！'
+}
 
 async function chat() {
   const res = await sendMessage(input.value)

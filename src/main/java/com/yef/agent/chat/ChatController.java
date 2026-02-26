@@ -161,6 +161,7 @@ public class ChatController {
     public AgentResponse reset(@RequestParam(defaultValue = "debug-user3") String userId) {
         memoryResetService.toEmptyUserDataByUserId(userId);
         AgentResponse agentResponse = new AgentResponse();
+        log.info("======> reset success");
         return agentResponse;
     }
 

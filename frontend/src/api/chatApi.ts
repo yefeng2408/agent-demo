@@ -10,12 +10,12 @@ export async function sendMessage(msg: string) {
 
 
 export async function resetUserData(currentUserId: string) {
-  const resetMemory = async () => {
-  await http.delete('/chat/personal/reset', {
+  const res = await http.delete('/chat/personal/reset', {
     params: { userId: currentUserId }
   })
-  location.reload()
+  return res.data
 }
 
+export default {
+  name: 'HelloWorld'
 }
-
