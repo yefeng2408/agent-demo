@@ -1,6 +1,6 @@
 前端：
 pnpm build
-scp -r dist ubuntu@服务器公网ip:/home/ubuntu/agent-stack/frontend/
+scp -r dist ubuntu@1.13.182.xx:/home/ubuntu/agent-stack/
 docker restart nginx
 
 后端：
