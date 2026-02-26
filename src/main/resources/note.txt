@@ -82,7 +82,6 @@ CALL apoc.periodic.iterate(
     mvn clean package -DskipTests
 
 ② 首次部署启动容器
-docker compose up -d nginx neo4j minio etcd milvus ollama ollama-init
 ./deploy/deploy.sh
  后续每次上线，直接：./deploy/deploy.sh
  不走sh脚本也可以直接执行compose文件：docker compose up -d （启动compose内所有应用） 部分应用：docker compose up -d agent_green

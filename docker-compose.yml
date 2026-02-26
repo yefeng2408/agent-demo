@@ -1,121 +1,213 @@
 name: agent-stack
 
-networks:
-  frontend_net:
-    name: agent-stack_frontend_net
-  backend_net:
-    name: agent-stack_backend_net
-
-volumes:
-  neo4j_data:
-  minio_data:
-  milvus_data:
-  etcd_data:
-  ollama_data:
-
 services:
 
+  # ======================
+  # 🧠 AGENT BLUE（唯一后端）
+  # ======================
+  agent_blue:
+    image: eclipse-temurin:21.0.5_11-jre
+    container_name: agent_blue
+    working_dir: /app
+    command: ["java","-jar","/app/app.jar"]
+
+    volumes:
+      - ./deploy/jars/blue/app.jar:/app/app.jar
+
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xms256m -Xmx768m -XX:MaxMetaspaceSize=256m -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai"
+      SPRING_PROFILES_ACTIVE: prd
+
+    ports:
+      - "8080:8080"
+
+    networks:
+      - backend_net
+
+    restart: always
+
+
+  # ======================
+  # 🌐 NGINX
+  # ======================
   nginx:
     image: nginx:alpine
     container_name: nginx
-    ports:
-      - "80:80"
+
     volumes:
       - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
+
+    ports:
+      - "80:80"
+
     networks:
       - frontend_net
       - backend_net
+
+    depends_on:
+      - agent_blue
+
     restart: always
 
+
+  # ======================
+  # 🧠 OLLAMA
+  # ======================
   ollama:
     image: ollama/ollama
     container_name: ollama
+
     ports:
       - "11434:11434"
+
     volumes:
       - ollama_data:/root/.ollama
+
     networks:
       - backend_net
+
     restart: always
+
 
   ollama-init:
     image: ollama/ollama
     container_name: ollama-init
+
+    command: >
+      sh -lc "sleep 3;
+      ollama pull nomic-embed-text;
+      echo 'nomic-embed-text ready'"
+
     depends_on:
       - ollama
-    command: >
-      sh -lc "
-      sleep 3;
-      ollama pull nomic-embed-text;
-      echo 'nomic-embed-text ready';
-      "
+
     volumes:
       - ollama_data:/root/.ollama
+
     networks:
       - backend_net
+
     restart: "no"
 
-  neo4j:
-    image: neo4j:5
-    container_name: neo4j
-    environment:
-      NEO4J_AUTH: ${NEO4J_USERNAME}/${NEO4J_PASSWORD}
-    ports:
-      - "7474:7474"
-      - "7687:7687"
-    volumes:
-      - neo4j_data:/data
-    networks:
-      - backend_net
-    restart: always
 
+  # ======================
+  # 🧠 ETCD
+  # ======================
   etcd:
     image: quay.io/coreos/etcd:v3.5.12
     container_name: etcd
-    command: >
-      etcd
-      --advertise-client-urls=http://etcd:2379
-      --listen-client-urls=http://0.0.0.0:2379
+
+    command:
+      - etcd
+      - --advertise-client-urls=http://etcd:2379
+      - --listen-client-urls=http://0.0.0.0:2379
+
     ports:
       - "2379:2379"
+
     volumes:
       - etcd_data:/etcd
+
     networks:
       - backend_net
+
     restart: always
 
+
+  # ======================
+  # 🧠 MINIO
+  # ======================
   minio:
     image: minio/minio
     container_name: minio
+
     command: server /data
+
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minio123
+
     ports:
       - "9000:9000"
+
     volumes:
       - minio_data:/data
+
     networks:
       - backend_net
+
     restart: always
 
+
+  # ======================
+  # 🧠 MILVUS
+  # ======================
   milvus:
     image: milvusdb/milvus:v2.4.4
     container_name: milvus
-    command: ["milvus", "run", "standalone"]
-    depends_on:
-      - etcd
-      - minio
+
+    command: ["milvus","run","standalone"]
+
     environment:
       ETCD_ENDPOINTS: etcd:2379
       MINIO_ADDRESS: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minio123
+
+    depends_on:
+      - etcd
+      - minio
+
     ports:
       - "19530:19530"
       - "9091:9091"
+
     volumes:
       - milvus_data:/var/lib/milvus
+
     networks:
       - backend_net
+
     restart: always
+
+
+  # ======================
+  # 🧠 NEO4J
+  # ======================
+  neo4j:
+    image: neo4j:5
+    container_name: neo4j
+
+    environment:
+      NEO4J_AUTH: neo4j/Neo4j@2026!
+
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+
+    volumes:
+      - neo4j_data:/data
+
+    networks:
+      - backend_net
+
+    restart: always
+
+
+# ======================
+# 🌐 NETWORKS
+# ======================
+networks:
+  frontend_net:
+  backend_net:
+
+
+# ======================
+# 💾 VOLUMES
+# ======================
+volumes:
+  etcd_data:
+  milvus_data:
+  minio_data:
+  neo4j_data:
+  ollama_data:
