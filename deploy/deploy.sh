@@ -46,63 +46,25 @@ echo "$CHANGED_FILES" | grep -q "pom.xml" && BUILD_BACKEND=true || true
 
 
 #########################################
-# Ensure pnpm exists (User-level install)
-#########################################
-
-if ! command -v pnpm >/dev/null 2>&1; then
-  echo "⚙️ pnpm not found — installing (user-level)..."
-
-  export PNPM_HOME="$HOME/.local/share/pnpm"
-  mkdir -p "$PNPM_HOME"
-
-  curl -fsSL https://get.pnpm.io/install.sh | env PNPM_HOME="$PNPM_HOME" sh -
-
-  # ⭐⭐⭐ 关键：当前 shell 立刻生效
-  export PATH="$PNPM_HOME:$PATH"
-
-  # ⭐⭐⭐ 等待 pnpm binary 写入完成
-  sleep 2
-
-  if ! command -v pnpm >/dev/null 2>&1; then
-    echo "❌ pnpm install failed"
-    exit 1
-  fi
-
-  echo "✅ pnpm installed: $(pnpm -v)"
-fi
-#########################################
-# Ensure pnpm exists (User-level install)
-#########################################
-
-if ! command -v pnpm >/dev/null 2>&1; then
-  echo "⚙️ pnpm not found — installing (user-level)..."
-
-  export PNPM_HOME="$HOME/.local/share/pnpm"
-  export PATH="$PNPM_HOME:$PATH"
-
-  mkdir -p "$PNPM_HOME"
-
-  # 官方用户级安装（不会写 /usr/bin，不需要 sudo）
-  curl -fsSL https://get.pnpm.io/install.sh | sh -
-
-  export PATH="$PNPM_HOME:$PATH"
-
-  echo "✅ pnpm installed: $(pnpm -v)"
-fi
-
-
-#########################################
-# STEP 2 — Frontend Build
+# STEP 2 — Frontend Build (Docker Mode — NO NODE ON SERVER)
 #########################################
 
 if [ "$BUILD_FRONTEND" = true ]; then
-  echo "🎨 Building frontend..."
-  cd "$FRONTEND_DIR"
-  pnpm install
-  pnpm build
-  cd "$ROOT_DIR"
+  echo "🎨 Building frontend via Docker (NO NODE ON SERVER)..."
+
+  docker build \
+    -t agent-frontend:latest \
+    -f "$ROOT_DIR/frontend/Dockerfile" \
+    "$FRONTEND_DIR"
+
+  # 将构建产物复制到 nginx 挂载目录
+  TMP_CONTAINER=$(docker create agent-frontend:latest)
+  docker cp "$TMP_CONTAINER":/app/dist "$FRONTEND_DIR/dist"
+  docker rm "$TMP_CONTAINER"
+
+  echo "✅ Frontend docker build complete."
 else
-  echo "⚡ Frontend unchanged — skip build"
+  echo "⚡ Frontend unchanged — skip docker build"
 fi
 
 #########################################
