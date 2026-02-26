@@ -17,6 +17,8 @@ async function chat() {
   answer.value = res.explain
 }
 
+
+
 </script>
 
 <template>
@@ -25,11 +27,11 @@ async function chat() {
     <!-- GraphPanel 放最上面 -->
     <HelloWorld />
     <div style="padding:40px">
-      <h2>Memory Agent Console</h2>
+      <h2>Agent Memory Console</h2>
 
       <input v-model="input" placeholder="输入一句话..." />
-      <button @click="chat">Send</button>
-
+      <button @click="chat">Send</button><br><br>
+      <button @click="resetMemory">clear user data</button>
       <pre>{{ answer }}</pre>
     </div>
 

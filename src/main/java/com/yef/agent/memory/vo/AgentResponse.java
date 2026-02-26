@@ -14,4 +14,5 @@ public class AgentResponse {
     private String explain;
 
     private Object graph;   // 先用 Object，后面再强类型
+
 }

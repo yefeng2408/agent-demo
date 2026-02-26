@@ -524,7 +524,18 @@ onBeforeUnmount(() => {
         <div>谓语(Predicate): {{ decision.claim.predicate }}</div>
         <div>宾语(Object): {{ decision.claim.objectId }}</div>
         <div>认知状态(epistemicStatus): {{ decision.claim.epistemicStatus ?? '-' }}</div>
-        <div>是否肯定(polarity): <b>{{ typeof decision.claim.polarity==='boolean' ? decision.claim.polarity : '-' }}</b></div>
+        <div>是否肯定(polarity): 
+          <span
+            v-if="typeof decision.claim.polarity === 'boolean'"
+            :class="[
+              'pill',
+              decision.claim.polarity ? 'pill-positive' : 'pill-negative'
+            ]"
+            style="font-weight:700;font-size:14px;"
+          >
+            {{ decision.claim.polarity ? 'TRUE' : 'FALSE' }}
+          </span>
+        </div>
 
         <!-- v9 Energy Meter -->
         <div style="margin-top:10px">
@@ -696,4 +707,19 @@ onBeforeUnmount(() => {
   0% { transform: translateX(-100%); }
   100% { transform: translateX(100%); }
 }
+
+.pill {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.pill-positive {
+  color: #3b82f6;
+}
+
+.pill-negative {
+  color: red;
+}
+
 </style>

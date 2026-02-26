@@ -1,9 +1,21 @@
-import axios from 'axios'
+import { http } from './http'
+
 
 export async function sendMessage(msg: string) {
-  const res = await axios.get('/chat/personal', {
+  const res = await http.get('/chat/personal', {
     params: { msg }
   })
-  console.log(res)
   return res.data
 }
+
+
+export async function resetUserData(currentUserId: string) {
+  const resetMemory = async () => {
+  await http.delete('/chat/personal/reset', {
+    params: { userId: currentUserId }
+  })
+  location.reload()
+}
+
+}
+

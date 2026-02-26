@@ -16,12 +16,11 @@ import com.yef.agent.memory.vo.CanonicalRelation;
 import com.yef.agent.repository.ClaimEvidenceRepository;
 import com.yef.agent.repository.StatusTransitionRepository;
 import com.yef.agent.service.ClaimConfidenceService;
+import com.yef.agent.service.MemoryResetService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
 
@@ -72,7 +71,8 @@ public class ChatController {
      * @return
      */
     @GetMapping("/personal")
-    public AgentResponse chat(@RequestParam String msg, @RequestParam(defaultValue = "debug-user3") String userId) {
+    public AgentResponse chat(@RequestParam String msg,
+                              @RequestParam(defaultValue = "debug-user3") String userId) {
         InteractionClassifier.ClassificationResult cls = llmInteractionAdapter.classify(userId, msg);
 
         InteractionType type = (cls == null || cls.interactionType() == null)
@@ -152,7 +152,21 @@ public class ChatController {
         log.info("4---->AgentResponse result:{}", JSON.toJSONString(new AgentResponse(answer, graphAnswer)));
         return new AgentResponse(answer, graphAnswer);*/
     }
+    @Autowired
+    MemoryResetService memoryResetService;
+
+
+    @ResponseBody
+    @DeleteMapping("/personal/reset")
+    public AgentResponse reset(@RequestParam(defaultValue = "debug-user3") String userId) {
+        memoryResetService.toEmptyUserDataByUserId(userId);
+        AgentResponse agentResponse = new AgentResponse();
+        return agentResponse;
+    }
+
 }
+
+
 
 @Slf4j
 @Component
