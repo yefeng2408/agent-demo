@@ -95,7 +95,7 @@ LOCAL_JAR="$(ls -1 target/*.jar | grep -v '\.original$' | head -n 1)"
 #########################################
 
 # 确保基础设施容器都在（至少 nginx 得在）
-docker compose -f "$COMPOSE_FILE" up -d nginx ollama neo4j minio etcd milvus
+docker compose -f "$COMPOSE_FILE" up -d --remove-orphans
 
 if docker exec nginx sh -c "grep -q 'server agent_blue:8080;' /etc/nginx/nginx.conf"; then
   CURRENT="blue"

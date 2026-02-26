@@ -1,13 +1,14 @@
-services:
+version: "3.9"
 
+services:
   nginx:
     image: nginx:alpine
     container_name: nginx
     ports:
       - "80:80"
     volumes:
-      - ./deploy/nginx.conf:/etc/nginx/nginx.conf
-      - ./frontend/dist:/usr/share/nginx/html
+      - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./frontend/dist:/usr/share/nginx/html:ro
     networks:
       - backend_net
       - frontend_net
@@ -15,22 +16,85 @@ services:
 
   ollama:
     image: ollama/ollama
+    container_name: ollama
+    ports:
+      - "11434:11434"
     networks:
       - backend_net
+    restart: always
 
   neo4j:
     image: neo4j:5
+    container_name: neo4j
     environment:
       NEO4J_AUTH: neo4j/Neo4j@2026!
+    ports:
+      - "7474:7474"
+      - "7687:7687"
     networks:
       - backend_net
+    restart: always
+
+  # Milvus standalone still needs etcd + minio
+  minio:
+    image: minio/minio
+    container_name: minio
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minio123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    networks:
+      - backend_net
+    restart: always
+
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.12
+    container_name: etcd
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+    command:
+      - etcd
+      - --name=etcd
+      - --data-dir=/etcd
+      - --advertise-client-urls=http://etcd:2379
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-advertise-peer-urls=http://etcd:2380
+      - --initial-cluster=etcd=http://etcd:2380
+      - --initial-cluster-state=new
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+    networks:
+      - backend_net
+    restart: always
 
   milvus:
     image: milvusdb/milvus:v2.4.4
-    command: ["milvus","run","standalone"]
+    container_name: milvus
+    command: ["milvus", "run", "standalone"]
+    depends_on:
+      - etcd
+      - minio
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minio123
+    ports:
+      - "19530:19530"
+      - "9091:9091"
     networks:
       - backend_net
+    restart: always
 
 networks:
   backend_net:
+    name: agent-stack_backend_net
   frontend_net:
+    name: agent-stack_frontend_net
