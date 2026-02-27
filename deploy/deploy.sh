@@ -81,6 +81,9 @@ if [ "$BUILD_FRONTEND" = true ]; then
     -f "$ROOT_DIR/frontend/Dockerfile" \
     "$FRONTEND_DIR"
 
+  # 清理旧 dist（防止残留旧 hash 文件）
+  rm -rf "$FRONTEND_DIR/dist"
+
   # 将构建产物复制到 nginx 挂载目录
   TMP_CONTAINER=$(docker create agent-frontend:latest)
   docker cp "$TMP_CONTAINER":/app/dist "$FRONTEND_DIR/dist"
