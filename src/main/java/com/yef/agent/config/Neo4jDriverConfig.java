@@ -13,7 +13,6 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class Neo4jDriverConfig {
 
-
     @Bean
     public Driver neo4jDriver(
             @Value("${neo4j.uri}") String uri,
@@ -24,7 +23,6 @@ public class Neo4jDriverConfig {
         Config config = Config.builder()
                 .withoutEncryption()   // 等价于 encrypted=false
                 .build();
-
-        return GraphDatabase.driver(uri, AuthTokens.basic(username, password), config);
+        return GraphDatabase.driver(uri, AuthTokens.basic(username, password),config);
     }
 }
