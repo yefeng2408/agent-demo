@@ -91,23 +91,40 @@ fi
 LOCAL_JAR="$(ls -1 target/*.jar | grep -v '\.original$' | head -n 1)"
 
 #########################################
-# STEP 4 — Detect current traffic
+# STEP 4 — Ensure infra & sanity check compose
 #########################################
 
-# 确保基础设施容器都在（至少 nginx 得在）
-docker compose -f "$COMPOSE_FILE" up -d --remove-orphans
+echo "🔍 Compose services:"
+SERVICES="$(docker compose -f "$COMPOSE_FILE" config --services)"
+echo "$SERVICES"
 
-if docker exec nginx sh -c "grep -q 'server agent_blue:8080;' /etc/nginx/nginx.conf"; then
-  CURRENT="blue"
-  TARGET="green"
-  TARGET_PORT=$PORT_GREEN
-else
-  CURRENT="green"
-  TARGET="blue"
-  TARGET_PORT=$PORT_BLUE
-fi
+need_services=("nginx" "ollama" "neo4j" "etcd" "minio" "milvus")
+for s in "${need_services[@]}"; do
+  if ! echo "$SERVICES" | grep -qx "$s"; then
+    echo "❌ compose missing service: $s"
+    echo "   -> You are running with compose file: $COMPOSE_FILE"
+    exit 1
+  fi
+done
 
-echo "🎯 Current=$CURRENT → Deploy=$TARGET"
+echo "🧱 Starting infra..."
+docker compose -f "$COMPOSE_FILE" up -d "${need_services[@]}"
+
+# Wait milvus port 19530 ready from inside backend_net (no need nc in milvus image)
+echo "⏳ Waiting Milvus 19530..."
+for i in $(seq 1 120); do
+  if docker run --rm --network "$BACK_NET" alpine:3.19 \
+      sh -c "apk add --no-cache netcat-openbsd >/dev/null 2>&1 && nc -z milvus 19530"; then
+    echo "✅ Milvus ready"
+    break
+  fi
+  if [ "$i" -eq 120 ]; then
+    echo "❌ Milvus not ready after 240s"
+    docker logs --tail=200 milvus || true
+    exit 1
+  fi
+  sleep 2
+done
 
 #########################################
 # STEP 5 — Build Immutable Image
