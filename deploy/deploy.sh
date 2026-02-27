@@ -8,6 +8,10 @@ APP_NAME="agent"
 PORT_BLUE=8081
 PORT_GREEN=8082
 
+CURRENT=""
+TARGET=""
+TARGET_PORT=""
+
 ROOT_DIR="$HOME/agent-stack"
 
 FRONTEND_DIR="$ROOT_DIR/frontend"
@@ -125,6 +129,24 @@ for i in $(seq 1 120); do
   fi
   sleep 2
 done
+
+#########################################
+# STEP 4.5 — Detect current traffic (blue/green)
+#########################################
+
+# Decide which color is currently serving traffic by reading nginx upstream.
+# If nginx points to agent_blue:8080, we deploy green; otherwise deploy blue.
+if docker exec nginx sh -c "grep -q 'server agent_blue:8080;' /etc/nginx/nginx.conf"; then
+  CURRENT="blue"
+  TARGET="green"
+  TARGET_PORT=$PORT_GREEN
+else
+  CURRENT="green"
+  TARGET="blue"
+  TARGET_PORT=$PORT_BLUE
+fi
+
+echo "🎯 Current=$CURRENT → Deploy=$TARGET (port=$TARGET_PORT)"
 
 #########################################
 # STEP 5 — Build Immutable Image
