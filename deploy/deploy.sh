@@ -3,9 +3,6 @@ set -euo pipefail
 
 echo "🔥 Agent Deploy v24 — FULL AUTO RELEASE"
 
-echo "NEO4J_USERNAME=$NEO4J_USERNAME"
-echo "NEO4J_PASSWORD=$NEO4J_PASSWORD"
-
 APP_NAME="agent"
 
 PORT_BLUE=8081
