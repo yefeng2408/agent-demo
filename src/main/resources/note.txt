@@ -122,3 +122,5 @@ curl -v http://127.0.0.1:8081/health || true
 
 # 4) 从 nginx 容器里访问 agent_blue（验证 nginx 到后端的网络）
 docker exec nginx sh -lc "getent hosts agent_blue && curl -v http://agent_blue:8080/actuator/health || curl -v http://agent_blue:8080/health || true"
+
+重启ngx： docker restart nginx
