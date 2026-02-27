@@ -249,9 +249,13 @@ nginx -s reload
 "
 
 #########################################
-# STEP 10 — Remove old
+# STEP 10 — Remove old (previous live)
 #########################################
 
-docker rm -f "${APP_NAME}_${CURRENT}" || true
+# After nginx has switched traffic to $TARGET, the previous live container is $CURRENT.
+# Remove it to avoid having two backend containers running.
+if [ -n "${CURRENT:-}" ] && [ "${CURRENT}" != "${TARGET}" ]; then
+  docker rm -f "${APP_NAME}_${CURRENT}" || true
+fi
 
 echo "🎉 DEPLOY SUCCESS"
