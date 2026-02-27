@@ -44,6 +44,7 @@ neo4j:
   uri: bolt://neo4j:7687
   username: ${NEO4J_USERNAME}
   password: ${NEO4J_PASSWORD}
+  encrypted: false
 
 #migration:
 #  enabled: true
