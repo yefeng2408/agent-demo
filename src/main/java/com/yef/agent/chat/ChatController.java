@@ -72,7 +72,7 @@ public class ChatController {
      */
     @GetMapping("/personal")
     public AgentResponse chat(@RequestParam String msg,
-                              @RequestParam(defaultValue = "debug-user3") String userId) {
+                              @RequestParam(defaultValue = "debug-user") String userId) {
         InteractionClassifier.ClassificationResult cls = llmInteractionAdapter.classify(userId, msg);
 
         InteractionType type = (cls == null || cls.interactionType() == null)

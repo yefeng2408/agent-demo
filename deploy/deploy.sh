@@ -18,6 +18,17 @@ FRONTEND_DIR="$ROOT_DIR/frontend"
 
 COMPOSE_FILE="$ROOT_DIR/docker-compose.yml"
 
+ENV_FILE="$ROOT_DIR/.env"
+
+if [ -f "$ENV_FILE" ]; then
+  echo "🔐 Loading env from .env"
+  set -a
+  source "$ENV_FILE"
+  set +a
+else
+  echo "⚠️  .env file not found at $ENV_FILE"
+fi
+
 if [ ! -f "$COMPOSE_FILE" ]; then
   echo "❌ docker compose file not found: $COMPOSE_FILE"
   echo "   (check file name: docker-compose.yml)"
@@ -187,6 +198,7 @@ docker run -d \
   -e MILVUS_HOST=milvus \
   -e NEO4J_URI=bolt://neo4j:7687 \
   -e SPRING_AI_OLLAMA_BASE_URL="http://ollama:11434" \
+  -e OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
   "$TARGET_IMAGE"
 
 docker network connect "$FRONT_NET" "${APP_NAME}_${TARGET}" || true

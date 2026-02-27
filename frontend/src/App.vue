@@ -41,6 +41,7 @@ async function chat() {
       <button @click="chat">Send</button><br><br>
       <button @click="resetMemory">clear user data</button>
       <pre>{{ answer }}</pre>
+      <h6>呀呀呀</h6>
     </div>
 
   </div>
