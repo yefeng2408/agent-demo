@@ -35,6 +35,7 @@ if [ ! -f "$COMPOSE_FILE" ]; then
   exit 1
 fi
 
+LIVE_ALIAS="agent_live"
 FRONT_NET="agent-stack_frontend_net"
 BACK_NET="agent-stack_backend_net"
 
@@ -145,22 +146,30 @@ for i in $(seq 1 120); do
 done
 
 #########################################
-# STEP 4.5 — Detect current traffic (blue/green)
+# STEP 4.5 — Detect current traffic via agent_live alias
 #########################################
 
-# Decide which color is currently serving traffic by reading nginx upstream.
-# If nginx points to agent_blue:8080, we deploy green; otherwise deploy blue.
-if docker exec nginx sh -c "grep -q 'server agent_blue:8080;' /etc/nginx/nginx.conf"; then
-  CURRENT="blue"
-  TARGET="green"
-  TARGET_PORT=$PORT_GREEN
+CURRENT=""
+CURRENT_NAME="$(docker network inspect "$BACK_NET" --format '{{range $id, $c := .Containers}}{{$c.Name}} {{join $c.Aliases ","}}{{"\n"}}{{end}}' \
+  | awk -v a="$LIVE_ALIAS" '$0 ~ a {print $1; exit}')"
+
+if [[ -n "${CURRENT_NAME:-}" ]]; then
+  if [[ "$CURRENT_NAME" == "${APP_NAME}_blue" ]]; then
+    CURRENT="blue";  TARGET="green"; TARGET_PORT=$PORT_GREEN
+  elif [[ "$CURRENT_NAME" == "${APP_NAME}_green" ]]; then
+    CURRENT="green"; TARGET="blue";  TARGET_PORT=$PORT_BLUE
+  else
+    echo "⚠️  agent_live is attached to unexpected container: $CURRENT_NAME"
+    CURRENT="green"; TARGET="blue"; TARGET_PORT=$PORT_BLUE
+  fi
 else
-  CURRENT="green"
+  echo "🆕 No agent_live alias found (first deploy)."
+  CURRENT=""
   TARGET="blue"
   TARGET_PORT=$PORT_BLUE
 fi
 
-echo "🎯 Current=$CURRENT → Deploy=$TARGET (port=$TARGET_PORT)"
+echo "🎯 Current=${CURRENT:-none} → Deploy=$TARGET (port=$TARGET_PORT)"
 
 #########################################
 # STEP 5 — Build Immutable Image
@@ -239,14 +248,28 @@ done
 curl -s "http://${READY_HOST}:${TARGET_PORT}/" >/dev/null || true
 
 #########################################
-# STEP 9 — SWITCH NGINX
+# STEP 9 — SWITCH TRAFFIC (move agent_live alias)
 #########################################
 
-docker exec nginx sh -c "
-sed -i 's/server agent_${CURRENT}:8080;/server agent_${TARGET}:8080;/g' /etc/nginx/nginx.conf
-nginx -t
-nginx -s reload
-"
+echo "🔁 Switching traffic by alias: ${CURRENT:-none} -> ${TARGET} (${LIVE_ALIAS})"
+
+# 1) 先把 CURRENT 容器上的 agent_live 去掉（通过 disconnect/reconnect 不带该 alias）
+if [[ -n "${CURRENT:-}" ]]; then
+  docker network disconnect "$BACK_NET" "${APP_NAME}_${CURRENT}" >/dev/null 2>&1 || true
+  docker network connect --alias "${APP_NAME}_${CURRENT}" "$BACK_NET" "${APP_NAME}_${CURRENT}" || true
+fi
+
+# 2) 给 TARGET 容器加上 agent_live alias（同样用 disconnect/reconnect 来“追加 alias”）
+docker network disconnect "$BACK_NET" "${APP_NAME}_${TARGET}" >/dev/null 2>&1 || true
+docker network connect \
+  --alias "${APP_NAME}_${TARGET}" \
+  --alias "${LIVE_ALIAS}" \
+  "$BACK_NET" \
+  "${APP_NAME}_${TARGET}"
+
+# 3) reload nginx（nginx.conf 永远不改）
+docker exec nginx nginx -t
+docker exec nginx nginx -s reload
 
 #########################################
 # STEP 10 — Remove old (previous live)

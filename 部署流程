@@ -13,3 +13,8 @@ docker restart agent_blue
 deploy.sh --frontend-only
 deploy.sh --backend-only
 deploy.sh --full
+
+#ngx首次切流
+docker network disconnect agent-stack_backend_net agent_green || true
+docker network connect --alias agent_green --alias agent_live agent-stack_backend_net agent_green
+docker exec nginx nginx -t && docker exec nginx nginx -s reload
