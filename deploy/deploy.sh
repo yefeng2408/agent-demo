@@ -3,6 +3,9 @@ set -euo pipefail
 
 echo "🔥 Agent Deploy v24 — FULL AUTO RELEASE"
 
+echo "NEO4J_USERNAME=$NEO4J_USERNAME"
+echo "NEO4J_PASSWORD=$NEO4J_PASSWORD"
+
 APP_NAME="agent"
 
 PORT_BLUE=8081
@@ -200,7 +203,7 @@ docker run -d \
   -e SPRING_PROFILES_ACTIVE=prd \
   -e MILVUS_HOST=milvus \
   -e NEO4J_URI=bolt://neo4j:7687 \
-  -e SPRING_NEO4J_URI=bolt://neo4j:7687 \
+  -e SPRING_NEO4J_URI=neo4j://neo4j:7687 \
   -e SPRING_NEO4J_AUTHENTICATION_USERNAME="${NEO4J_USERNAME}" \
   -e SPRING_NEO4J_AUTHENTICATION_PASSWORD="${NEO4J_PASSWORD}" \
   -e SPRING_AI_OLLAMA_BASE_URL="http://ollama:11434" \
