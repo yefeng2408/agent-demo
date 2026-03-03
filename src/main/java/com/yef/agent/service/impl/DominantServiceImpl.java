@@ -159,7 +159,7 @@ public class DominantServiceImpl implements DominantService {
         DominantSnapshot snap = snapOpt.get();
         ClaimEvidence dom = snap.claim();
 
-        Instant dominantSince = snap.dominantSince(); // ✅ 来自 BeliefState.since
+        Instant dominantSince = snap.since(); // ✅ 来自 BeliefState.since
         Duration age = dominantSince == null
                 ? Duration.ZERO
                 : Duration.between(dominantSince, Instant.now());
@@ -168,7 +168,7 @@ public class DominantServiceImpl implements DominantService {
         double effective = dom.confidence();
 
         // 但 UI 上你也想看“成为 dominant 当时的支持度”：来自 BeliefState.confidence
-        double supportAt = snap.supportConfidenceAt();
+        //double supportAt = snap.supportConfidenceAt();
 
         // recentlyChallenged：我建议基于 snap.reason + dominantSince（更符合 dominant 语义）
         boolean recentlyChallenged =

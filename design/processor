@@ -1,0 +1,192 @@
+
+一：最终稳定版（图谱结构）：Agent Memory — Cognitive Field Core Model
+
+            (User)
+               |
+               | HAS_SLOT
+               v
+            (ClaimSlot)  ←—— 认知场 / 冲突域
+               |
+               | HAS_BELIEF
+               v
+            (BeliefState)  ←—— 当前裁决层
+               |
+               | DOMINANT (nullable)
+               v
+            (Claim)
+
+            (ClaimSlot)
+               |
+               | CONTAINS
+               v
+            (Claim)
+
+
+二、节点职责划分
+------------------------------------------------
+节点               职责              是否参与数值计算
+------------------------------------------------
+User             认知主体                 ❌
+
+ClaimSlot      冲突域（认知场）            ❌
+Claim         原子陈述（候选粒子）          ✅
+BeliefState    当前裁决状态                ❌
+------------------------------------------------
+
+
+三、节点字段定义（冻结清单）
+
+1️⃣ User节点 (:User)
+------------------------------------------------
+字段          类型          说明
+------------------------------------------------
+userId      String        全局唯一
+createdAt    Long         创建时间
+version     String        系统版本
+------------------------------------------------
+
+
+2️⃣ ClaimSlot节点（认知场） (:ClaimSlot)
+------------------------------------------------
+字段                类型               说明
+------------------------------------------------
+slotKey           String            唯一冲突域键
+subjectId         String             主体
+predicate         String             谓词
+objectId          String            Canonical Object
+quantifier        String            ONE / MANY
+createdAt          Long             创建时间
+lastUpdatedAt      Long             最近更新
+------------------------------------------------
+
+3️⃣ Claim节点（原子陈述） (:Claim)
+------------------------------------------------
+字段               类型                说明
+------------------------------------------------
+claimKey          String              唯一
+slotKey           String            所属冲突域
+subjectId         String              主体
+predicate         String              谓词
+objectId          String          Canonical Object
+quantifier        String              ONE
+polarity          Boolean         true / false
+confidence        Double            0<conf<1
+supportCount      Integer          累计支持次数
+generation        String               V3
+source            String       USER / SELF_HEAL / EVOLUTION
+createdAt         Long               创建时间
+lastSupportedAt   Long              最近支持时间
+legacy            Boolean           是否旧代数据
+------------------------------------------------
+🚫 禁止在 Claim 中存储：
+	•	EpistemicStatus
+	•	dominant 标记
+	•	beliefState
+   Claim 只负责数值
+
+4️⃣ BeliefState节点（结构裁决层）
+------------------------------------------------
+字段               类型                说明
+------------------------------------------------
+slotKey           String              所属冲突域
+beliefState       Enum                当前结构状态
+dominantClaimKey  String (nullable)   当前 dominant
+since             Long                状态开始间
+lastEvaluatedAt   Long                最近裁决时间
+------------------------------------------------
+全局新增一个配置项，采用spring @Value注入的方式：
+epsilon:Double  // 冲突差值阈值
+伪代码：
+Claim A (conf = 0.62)
+Claim B (conf = 0.60)
+
+diff = 0.02
+
+if diff < epsilon(0.05)
+    beliefState = CONTESTED
+    dominantClaimKey = null
+else
+    beliefState = STABLE_CONFIRMED
+    dominantClaimKey = A
+
+SlotBeliefState枚举类型 只由三件事决定：
+1️⃣ 是否存在 dominant
+2️⃣ dominant 与 challenger 的 diff
+3️⃣ epsilon（系统常量）
+
+四、关系结构（冻结）
+(:User)-[:HAS_SLOT]->(:ClaimSlot)
+
+(:ClaimSlot)-[:CONTAINS]->(:Claim)
+
+(:ClaimSlot)-[:HAS_BELIEF]->(:BeliefState)
+
+(:BeliefState)-[:DOMINANT]->(:Claim)
+
+
+五、结构哲学（必须牢记）
+ClaimSlot = 场
+Claim = 粒子
+BeliefState = 裁决
+
+六、状态推导原则
+BeliefState 不由 LLM 决定。
+    BeliefState 由：
+        dominantConfidence
+        challengerConfidence
+        epsilon
+    推导得出。
+
+七、未来可扩展字段（安全）
+Claim 可扩展：
+	•	decayFactor
+	•	evidenceWeight
+	•	momentum
+	•	volatility
+
+BeliefState 可扩展：
+	•	entropy
+	•	stabilityScore
+	•	volatilityIndex
+
+
+八、设计冻结原则
+以下结构未来不得改变：
+	1.	slotKey 生成规则
+	2.	Claim 不存储结构态
+	3.	BeliefState 统一裁决
+	4.	dominant 属于 BeliefState
+
+九、核心目标
+该结构目标：
+	•	保证冲突域稳定
+	•	保证 delta 算法可独立演化
+	•	保证 LLM 漂移可控
+	•	保证未来算法升级无需重构图
+
+十、最终一句话
+图结构一旦冻结，未来你只优化算法，不再动骨架。
+
+
+
+
+                         ┌──────────────────────┐
+                         │        LLM 层        │
+                         └───────────┬──────────┘
+                                     │
+          ┌──────────────────────────┼──────────────────────────┐
+          │                          │                          │
+          ▼                          ▼                          ▼
+
+┌──────────────────┐      ┌──────────────────┐      ┌──────────────────┐
+│   Graph Layer    │      │ Narrative Layer  │      │ Attribute Layer  │
+│  (认知计算核心)    │      │  (解释与表达)      │      │  (细节存储)       │
+└──────────────────┘      └──────────────────┘      └──────────────────┘
+
+
+
+
+
+
+
+

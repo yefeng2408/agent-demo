@@ -1,6 +1,8 @@
 package com.yef.agent.memory.vo;
 
 import com.yef.agent.graph.answer.ClaimEvidence;
+import com.yef.agent.memory.SlotBeliefState;
+
 import java.time.Instant;
 
 /**
@@ -26,8 +28,17 @@ import java.time.Instant;
  *   因此读取时必须组合 Node + Relationship。
  */
 public record DominantSnapshot(
-        ClaimEvidence claim,
-        Instant dominantSince,
-        double supportConfidenceAt,
-        String reason
+        String slotKey,
+        //dominantClaimKey
+        String dominantClaimKey,
+
+        SlotBeliefState beliefState,
+        String reason,
+        //since
+        Instant since,
+        //最近裁决时间
+        Instant lastEvaluatedAt,
+
+
+        ClaimEvidence claim
 ) {}

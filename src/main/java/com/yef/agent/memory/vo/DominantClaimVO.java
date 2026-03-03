@@ -132,13 +132,6 @@ public class DominantClaimVO {
                 claim.quantifier()
         );
 
-        // ========= 6️⃣ recentlyChallenged =========
-        boolean recentlyChallenged =
-                claim.lastStatusChangedAt() != null &&
-                        Duration.between(
-                                claim.lastStatusChangedAt(),
-                                Instant.now()
-                        ).toMinutes() < 30;
 
         // ========= 7️⃣ 构建 VO =========
         return new DominantClaimVO(

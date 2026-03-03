@@ -4,11 +4,9 @@ import com.yef.agent.component.KeyCodec;
 import com.yef.agent.component.Neo4jMappingSupport;
 import com.yef.agent.graph.ExtractedRelation;
 import com.yef.agent.graph.answer.ClaimEvidence;
-import com.yef.agent.graph.eum.PredicateType;
-import com.yef.agent.graph.eum.Quantifier;
-import com.yef.agent.graph.eum.Source;
-import com.yef.agent.graph.eum.SourceAdapter;
+import com.yef.agent.graph.eum.*;
 import com.yef.agent.memory.EpistemicStatus;
+import com.yef.agent.memory.SlotBeliefState;
 import com.yef.agent.memory.pipeline.TransitionReason;
 import com.yef.agent.memory.vo.DominantSnapshot;
 import com.yef.agent.memory.vo.OverriddenEdgeVO;
@@ -19,7 +17,6 @@ import org.neo4j.driver.Driver;
 import org.neo4j.driver.Record;
 import org.neo4j.driver.Result;
 import org.neo4j.driver.Session;
-import org.neo4j.driver.types.Node;
 import org.springframework.data.neo4j.core.Neo4jClient;
 import org.springframework.stereotype.Component;
 
@@ -278,25 +275,21 @@ public class ClaimEvidenceRepositoryImpl implements ClaimEvidenceRepository {
                             : rec.get("lastMomentumAt")
                             .asZonedDateTime()
                             .toInstant();
-
-
             ClaimEvidence claimEvidence = new ClaimEvidence(
-                    rec.get("elementId").asString(),
+                    rec.get("claimKey").asString(),
+                    rec.get("slotKey").asString(),
                     rec.get("subjectId").asString(),
                     PredicateType.valueOf(predStr),
                     rec.get("objectId").asString(),
                     Quantifier.valueOf(qStr),
                     rec.get("polarity").asBoolean(),
-                    epistemicStatus,
                     rec.get("confidence").asDouble(),
-                    rec.get("source").isNull() ? null : SourceAdapter.fromRaw(rec.get("source").asString()),
-                    rec.get("batch").isNull() ? null : rec.get("batch").asString(),
+                    rec.get("supportCount").asInt(),
+                    ClaimGeneration.valueOf(rec.get("generation").isNull() ? null : rec.get("generation").asString()),
+                    Source.valueOf(rec.get("source").isNull() ? null : rec.get("source").asString()),
+                    rec.get("createdAt").isNull() ? null : rec.get("createdAt").asZonedDateTime().toInstant(),
                     rec.get("updatedAt").isNull() ? null : rec.get("updatedAt").asZonedDateTime().toInstant(),
-                    rec.get("lastStatusChangedAt").isNull() ? null : rec.get("lastStatusChangedAt").asZonedDateTime().toInstant(),
-                    rec.get("priority").asInt(),
-                    momentum,
-                    lastMomentumAt
-
+                    rec.get("lastSupportedAt").isNull() ? null : rec.get("lastSupportedAt").asZonedDateTime().toInstant()
             );
             log.info("ClaimEvidenceRepository.getClaimEvidence result:{}", claimEvidence);
             return claimEvidence;
@@ -386,19 +379,21 @@ public class ClaimEvidenceRepositoryImpl implements ClaimEvidenceRepository {
                   quantifier:$q
                 })
                 RETURN
-                  c.subjectId AS subjectId,
-                  c.predicate AS predicate,
-                  c.objectId AS objectId,
-                  c.quantifier AS quantifier,
-                  c.polarity AS polarity,
-                  c.epistemicStatus AS epistemicStatus,
-                  coalesce(c.confidence, 0.5) AS confidence,
-                  c.source AS source,
-                  c.batch AS batch,
-                  c.updatedAt AS updatedAt,
-                  c.lastStatusChangedAt AS lastStatusChangedAt,
-                  coalesce(c.priority, 0) AS priority
-                ORDER BY coalesce(c.confidence, 0.5) DESC, coalesce(c.priority, 0) DESC
+                    c.claimKey         AS claimKey,
+                    c.slotKey          AS slotKey,
+                    c.subjectId        AS subjectId,
+                    c.predicate        AS predicate,
+                    c.objectId         AS objectId,
+                    c.quantifier       AS quantifier,
+                    c.polarity         AS polarity,
+                    c.confidence       AS confidence,
+                    c.supportCount     AS supportCount,
+                    c.generation       AS generation,
+                    c.source           AS source,
+                    c.createdAt        AS createdAt,
+                    c.lastSupportedAt  AS lastSupportedAt,
+                
+                ORDER BY coalesce(c.confidence, 0.5) DESC
                 """;
 
         try (Session session = driver.session()) {
@@ -417,37 +412,30 @@ public class ClaimEvidenceRepositoryImpl implements ClaimEvidenceRepository {
             return records.stream().map(rec -> {
                 String predStr = rec.get("predicate").asString();
                 String qStr = rec.get("quantifier").asString();
-                String statusStr = rec.get("epistemicStatus").isNull() ? null : rec.get("epistemicStatus").asString();
-                EpistemicStatus epistemicStatus = EpistemicStatus.fromGraph(statusStr);
-
-                double momentum = rec.containsKey("momentum")
+             /*   double momentum = rec.containsKey("momentum")
                         ? rec.get("momentum").asDouble()
                         : 0.0d;
-
                 Instant lastMomentumAt =
                         rec.get("lastMomentumAt").isNull()
                                 ? null
                                 : rec.get("lastMomentumAt")
                                 .asZonedDateTime()
-                                .toInstant();
-
-
+                                .toInstant();*/
                 return new ClaimEvidence(
-                        rec.get("elementId").asString(),
+                        rec.get("claimKey").asString(),
+                        rec.get("slotKey").asString(),
                         rec.get("subjectId").asString(),
                         PredicateType.valueOf(predStr),
                         rec.get("objectId").asString(),
                         Quantifier.valueOf(qStr),
                         rec.get("polarity").asBoolean(),
-                        epistemicStatus,
                         rec.get("confidence").asDouble(),
-                        rec.get("source").isNull() ? null : SourceAdapter.fromRaw(rec.get("source").asString()),
-                        rec.get("batch").isNull() ? null : rec.get("batch").asString(),
+                        rec.get("supportCount").asInt(),
+                        ClaimGeneration.valueOf(rec.get("generation").isNull() ? null : rec.get("generation").asString()),
+                        Source.valueOf(rec.get("source").isNull() ? null : rec.get("source").asString()),
+                        rec.get("createdAt").isNull() ? null : rec.get("createdAt").asZonedDateTime().toInstant(),
                         rec.get("updatedAt").isNull() ? null : rec.get("updatedAt").asZonedDateTime().toInstant(),
-                        rec.get("lastStatusChangedAt").isNull() ? null : rec.get("lastStatusChangedAt").asZonedDateTime().toInstant(),
-                        rec.get("priority").asInt(),
-                        momentum,
-                        lastMomentumAt
+                        rec.get("lastSupportedAt").isNull() ? null : rec.get("lastSupportedAt").asZonedDateTime().toInstant()
                 );
             }).toList();
         }
@@ -487,11 +475,9 @@ public class ClaimEvidenceRepositoryImpl implements ClaimEvidenceRepository {
     public void writeDominant(String userId,
                               String slotKey,
                               String claimKey,
-                              double supportConfidenceAt,
-                              EpistemicStatus status,
+                              SlotBeliefState beliefState,
                               String reason) {
-        log.info("------>writeDominant|param userId:{},slotKey:{}, claimKey:{},status:{},reason:{}",
-                userId, slotKey, claimKey, status, reason);
+        log.info("------>writeDominant|param userId:{},slotKey:{}, claimKey:{},reason:{}", userId, slotKey, claimKey, reason);
         String cypher = """
                 MATCH (slot:ClaimSlot {key:$slotKey})
                 MATCH (c:Claim {claimKey:$claimKey})
@@ -512,11 +498,12 @@ public class ClaimEvidenceRepositoryImpl implements ClaimEvidenceRepository {
                 FOREACH (_ IN CASE WHEN oldClaim IS NULL OR oldClaim.claimKey <> $claimKey THEN [1] ELSE [] END |
                   CREATE (newBs:BeliefState {
                     id: randomUUID(),
-                    slotKey: $slotKey,
-                    dominantClaimKey: $claimKey,
-                    reason: $reason,
+                    slotKey: $slotKey,   //所属冲突域
+                    beliefState: $beliefState,  //当前结构状态
+                    dominantClaimKey: dominantClaimKey, //当前 dominant
+                    resaon: $reason,
                     since: datetime(),
-                    lastActiveAt: datetime()
+                    lastEvaluatedAt: null
                     // ✅ v4 建议：BeliefState 不再承载 epistemicStatus / confidence（避免双写）
                   })
                   MERGE (newBs)-[:BASED_ON]->(c)
@@ -538,9 +525,8 @@ public class ClaimEvidenceRepositoryImpl implements ClaimEvidenceRepository {
                     tx.run(cypher, parameters(
                             "uid", userId,
                             "slotKey", slotKey,
-                            "claimKey", claimKey,
-                            "confidence", supportConfidenceAt,
-                            "status", status.name(),
+                            "dominantClaimKey", claimKey,
+                            "beliefState", beliefState.name(),
                             "reason", reason
                     )).consume()
             );
@@ -589,24 +575,27 @@ public class ClaimEvidenceRepositoryImpl implements ClaimEvidenceRepository {
                 MATCH (b)-[:BASED_ON]->(c:Claim)
                 RETURN
                     // ---- BeliefState 侧：dominant 语义 ----
-                    b.since      AS dominantSince,
-                    b.confidence AS supportConfidenceAt,
-                    b.reason     AS reason,
+                    b.slotKey           AS slotKey,
+                    b.dominantClaimKey  AS dominantClaimKey
+                    b.beliefState       AS beliefState
+                    b.reason            AS reason,
+                    b.since             AS since,
+                    b.lastEvaluatedAt   AS lastEvaluatedAt,
                 
                     // ---- Claim 侧：claim 本体字段 ----
-                    elementId(c) AS elementId,
-                    c.subjectId AS subjectId,
-                    c.predicate AS predicate,
-                    c.objectId AS objectId,
-                    c.quantifier AS quantifier,
-                    c.polarity AS polarity,
-                    c.epistemicStatus AS epistemicStatus,
-                    c.confidence AS confidence,
-                    c.source AS source,
-                    c.batch AS batch,
-                    c.updatedAt AS updatedAt,
-                    c.lastStatusChangedAt AS lastStatusChangedAt,
-                    c.priority AS priority
+                    c.claimKey         AS claimKey,
+                    c.slotKey          AS slotKey,
+                    c.subjectId        AS subjectId,
+                    c.predicate        AS predicate,
+                    c.objectId         AS objectId,
+                    c.quantifier       AS quantifier,
+                    c.polarity         AS polarity,
+                    c.confidence       AS confidence,
+                    c.supportCount     AS supportCount,
+                    c.generation       AS generation,
+                    c.source           AS source,
+                    c.createdAt        AS createdAt,
+                    c.lastSupportedAt  AS lastSupportedAt,
                 """;
         try (Session session = driver.session()) {
             return session.executeRead(tx ->
@@ -618,52 +607,39 @@ public class ClaimEvidenceRepositoryImpl implements ClaimEvidenceRepository {
         }
     }
 
-    private DominantSnapshot mapToDominant(Record r) {
-        Integer priority = r.get("priority").isNull() ? null : r.get("priority").asInt();
-        double momentum = r.containsKey("momentum") ? r.get("momentum").asDouble() : 0.0d;
-
+    private DominantSnapshot mapToDominant(Record rec) {
+        /*double momentum = rec.containsKey("momentum") ? rec.get("momentum").asDouble() : 0.0d;
         Instant lastMomentumAt = r.get("lastMomentumAt").isNull()
                         ? null
                         : r.get("lastMomentumAt")
                         .asZonedDateTime()
-                        .toInstant();
-
-        String batch = r.containsKey("batch") ? r.get("batch").asString() : "";
-
-        Instant dominantSince = null;
-        if (!r.get("dominantSince").isNull()) {
-            dominantSince = r.get("dominantSince").asZonedDateTime().toInstant();
-        }
-
-        double supportConfidenceAt = r.get("supportConfidenceAt").isNull()
-                ? 0.0d : r.get("supportConfidenceAt").asDouble();
-
-        String reason = r.get("reason").isNull() ? null : r.get("reason").asString();
-
+                        .toInstant();*/
+        String predStr = rec.get("predicate").asString();
+        String qStr = rec.get("quantifier").asString();
         ClaimEvidence claim = new ClaimEvidence(
-                r.get("elementId").asString(),
-                r.get("subjectId").asString(),
-                PredicateType.valueOf(r.get("predicate").asString()),
-                r.get("objectId").asString(),
-                Quantifier.valueOf(r.get("quantifier").asString()),
-                r.get("polarity").asBoolean(),
-                EpistemicStatus.valueOf(r.get("epistemicStatus").asString()),
-                r.get("confidence").asDouble(),
-                Source.valueOf(r.get("source").asString()),
-                batch,
-                r.get("updatedAt").asZonedDateTime().toInstant(),
-                r.get("lastStatusChangedAt").isNull() ? null :
-                        r.get("lastStatusChangedAt").asZonedDateTime().toInstant(),
-                priority,
-                momentum,
-                lastMomentumAt
+                rec.get("claimKey").asString(),
+                rec.get("slotKey").asString(),
+                rec.get("subjectId").asString(),
+                PredicateType.valueOf(predStr),
+                rec.get("objectId").asString(),
+                Quantifier.valueOf(qStr),
+                rec.get("polarity").asBoolean(),
+                rec.get("confidence").asDouble(),
+                rec.get("supportCount").asInt(),
+                ClaimGeneration.valueOf(rec.get("generation").isNull() ? null : rec.get("generation").asString()),
+                Source.valueOf(rec.get("source").isNull() ? null : rec.get("source").asString()),
+                rec.get("createdAt").isNull() ? null : rec.get("createdAt").asZonedDateTime().toInstant(),
+                rec.get("updatedAt").isNull() ? null : rec.get("updatedAt").asZonedDateTime().toInstant(),
+                rec.get("lastSupportedAt").isNull() ? null : rec.get("lastSupportedAt").asZonedDateTime().toInstant()
         );
-
         return new DominantSnapshot(
-                claim,
-                dominantSince,
-                supportConfidenceAt,
-                reason
+                rec.get("slotKey").asString(),
+                rec.get("dominantClaimKey").asString(),
+                SlotBeliefState.valueOf(rec.get("beliefState").isNull() ? null : rec.get("beliefState").asString()),
+                rec.get("reason").asString(),
+                rec.get("since").isNull() ? null : rec.get("since").asZonedDateTime().toInstant(),
+                rec.get("lastEvaluatedAt").isNull() ? null : rec.get("lastEvaluatedAt").asZonedDateTime().toInstant(),
+                claim
         );
     }
 

@@ -155,21 +155,6 @@ public class ClaimConfidenceService {
     }
 
 
-    /**
-     * 确保新的声明存在。若没有，则新增本次claim
-     *
-     * @param userId
-     * @param r
-     */
-    public void ensureClaimSlotExists(String userId, ExtractedRelation r) {
-        // 这个方法只负责：
-        // - 如果 polarity 对应的 claim 不存在 → 创建一条
-        // - 如果存在 → 什么都不做（交给 upsertAndSupport）
-        if (!Neo4jGraphAnswerer.claimExistsRaw(userId, r)) {
-            createInitialClaimSlot(userId, r);
-        }
-    }
-
 
     private void createInitialClaimSlot(String userId, ExtractedRelation r) {
         String cypher = """
@@ -186,19 +171,29 @@ public class ClaimConfidenceService {
                       legacy:     $legacy
                     })
                     ON CREATE SET
+                    
+                    RETURN
+                        // ---- BeliefState ----
+                        b.slotKey            AS slotKey,
+                        b.dominantClaimKey   AS dominantClaimKey,
+                        b.beliefState        AS beliefState,
+                        b.since              AS since,
+                        b.lastEvaluatedAt    AS lastEvaluatedAt,
+                       //-----claim node-----
                       c.claimKey        = $claimKey,
+                      c.slotKey         = $claimSlotKey,
+                      c.subjectId       = $sid,
+                      c.predicate       = $pred,
+                      c.objectId        = $oid,
+                      c.quantifier      = $q,
+                      c.polarity        = $pol,
                       c.confidence      = $initConf,
                       c.supportCount    = 0,
-                      c.source          = $source,
-                      c.batch           = $batch,
                       c.generation      = $generation,
-                      c.epistemicStatus = 'HYPOTHETICAL',
-                      c.priority        = 0,
+                      c.source          = $source,
                       c.createdAt       = datetime(),
-                      c.updatedAt       = datetime()
-                    ON MATCH SET
-                      c.updatedAt       = datetime()
-                
+                      c.updatedAt       = datetime(),
+                      c.lastSupportedAt = datetime()
                     // 3️⃣ ClaimSlot（四元组，不含 polarity）
                     MERGE (slot:ClaimSlot {key:$slotKey})
                 
@@ -220,19 +215,15 @@ public class ClaimConfidenceService {
         try (Session session = driver.session()) {
             session.executeWrite(tx -> tx.run(cypher, parameters(
                     "uid", userId,
-
                     "slotKey", slotKey,
                     "claimKey", claimKey,
-
                     "sid", r.subjectId(),
                     "pred", r.predicateType().name(),
                     "oid", r.objectId(),
                     "q", r.quantifier().name(),
                     "pol", r.polarity(),
                     "legacy", r.generation().isLegacy(),
-
                     "initConf", Math.min(r.confidence(), 0.6),
-
                     "source", r.source().name(),
                     "batch", "slot-init",
                     "generation", r.generation().name()
@@ -240,61 +231,18 @@ public class ClaimConfidenceService {
         }
     }
 
-
+    /**
+     * 确保新的声明存在。若没有，则新增本次claim
+     *
+     * @param userId
+     * @param r
+     */
     public void createInitialClaim(String userId, ExtractedRelation r) {
         // 只做一件事：创建 claim slot
-        ensureClaimSlotExists(userId, r);
-        // 设置初始 epistemicStatus
-        // EpistemicStatus 为 CONFIRMED 或 ASSERTED，看你定义
-        setEpistemicStatus(userId, r, EpistemicStatus.HYPOTHETICAL);
-/*        // 首次就写入 dominant 链路
-        String slotKey  = keyCodec.buildSlotKey2(r);
-        String claimKey = keyCodec.buildExtractRelKey(r);
-        if (!claimEvidenceRepository.hasDominant(userId, slotKey)) {
-            claimEvidenceRepository.writeDominant(
-                    userId,
-                    slotKey,
-                    claimKey,
-                    Math.min(r.confidence(), 0.6),
-                    EpistemicStatus.HYPOTHETICAL,
-                    "BOOTSTRAP"
-            );
-        }*/
-    }
-
-
-    private void setEpistemicStatus(String userId,
-                                    ExtractedRelation r,
-                                    EpistemicStatus status) {
-
-        try (Session session = driver.session()) {
-            session.executeWrite(tx -> {
-
-                tx.run("""
-                                MATCH (c:Claim {
-                                    subjectId: $subjectId,
-                                    predicate: $predicate,
-                                    objectId: $objectId,
-                                    quantifier: $quantifier,
-                                    polarity: $polarity,
-                                    generation: $generation
-                                })
-                                SET c.epistemicStatus = $status,
-                                    c.updatedAt = datetime()
-                                """,
-                        Map.of(
-                                "subjectId", userId,
-                                "predicate", r.predicateType().name(),
-                                "objectId", r.objectId(),
-                                "quantifier", r.quantifier().name(),
-                                "polarity", r.polarity(),
-                                "generation", r.generation().name(),
-                                "status", status.name()
-                        )
-                ).consume();
-                return null;
-            });
+        if (!Neo4jGraphAnswerer.claimExistsRaw(userId, r)) {
+            createInitialClaimSlot(userId, r);
         }
     }
+
 
 }

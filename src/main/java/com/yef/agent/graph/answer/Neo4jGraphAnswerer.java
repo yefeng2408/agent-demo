@@ -208,8 +208,6 @@ public class Neo4jGraphAnswerer implements GraphAnswerer {
                   AND c.predicate = $pred
                   AND c.objectId = $obj
                   AND c.quantifier = $quant
-                //  AND c.polarity = $pol
-                  AND c.legacy = false
                 RETURN count(c) > 0 AS exists
                 """;
         try (Session session = driver.session()) {

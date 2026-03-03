@@ -109,7 +109,7 @@ public class OpposeDeltaStrategy implements DeltaStrategy {
                 oppBefore.confidence(),
                 oppAfter,
                 ctx.intentResult().intent(),   // ⭐ oppose = challenge dominant
-                ctx.intentResult().confidence(),  // 可以后面改成 LLM 输出
+                ctx.intentResult().assertionStrength(),  // 可以后面改成 LLM 输出
                 overrideTargetForOpp
         );
 

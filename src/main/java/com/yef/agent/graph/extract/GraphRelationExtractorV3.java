@@ -13,7 +13,6 @@ import java.util.List;
 
 @Slf4j
 @Component
-@Deprecated
 public class GraphRelationExtractorV3 implements GraphRelationExtractor {
 
     private final ChatClient chatClient;

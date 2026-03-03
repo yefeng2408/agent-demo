@@ -3,6 +3,7 @@ package com.yef.agent.memory;
 /**
  * 认知状态
  */
+@Deprecated
 public enum EpistemicStatus {
     CONFIRMED,        // 认知上“确认”：用户明确断言/重复确认
     HYPOTHETICAL,     // 假设/如果/可能/我想象

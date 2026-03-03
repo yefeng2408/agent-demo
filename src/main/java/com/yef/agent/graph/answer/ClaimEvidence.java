@@ -1,9 +1,9 @@
 package com.yef.agent.graph.answer;
 
+import com.yef.agent.graph.eum.ClaimGeneration;
 import com.yef.agent.graph.eum.PredicateType;
 import com.yef.agent.graph.eum.Quantifier;
 import com.yef.agent.graph.eum.Source;
-import com.yef.agent.memory.EpistemicStatus;
 import org.neo4j.driver.types.Node;
 
 import java.time.Instant;
@@ -12,7 +12,23 @@ import java.time.Instant;
  * claim证据对象
  */
 public record ClaimEvidence(
-        String elementId,   // ← graph identity
+        String  claimKey,                      //  唯一
+        String slotKey,                      // 所属冲突域
+        String subjectId,                     //  主体
+        PredicateType predicate,                     //  谓词
+        String objectId,                    //Canonical Object
+        Quantifier quantifier,                   //   ONE
+        boolean polarity,                   //true / false
+        double confidence,                  //  0<conf<1
+        int supportCount,                    //   累计支持次数
+        ClaimGeneration generation,                      // V3
+        Source source,                         //USER / SELF_HEAL / EVOLUTION
+        Instant createdAt,                      //   创建时间
+        Instant updatedAt,
+        Instant lastSupportedAt              //   最近支持时间
+/*        String elementId,   // ← graph identity
+        String claimKey,
+        String slotKey,
         //subjectId
         String subjectId,
         //谓语
@@ -23,32 +39,25 @@ public record ClaimEvidence(
         Quantifier quantifier,
         //对立观点
         boolean polarity,
-
-        EpistemicStatus epistemicStatus,
         //置信度
         double confidence,
         //区分用户请求的内容是：用户陈述｜自我修正｜提问
         Source source,
-
         String batch,
-
         Instant updatedAt,
         //epistemicStatus最近一次的更新时间
         Instant lastStatusChangedAt,
         //认知裁决顺序
         int priority,
-
         double momentum,
-        Instant lastMomentumAt
+        Instant lastMomentumAt*/
 
 ) {
 
 
     public static ClaimEvidence fromNode(Node node) {
-
-        // ===== graph identity =====
-        String elementId = node.elementId();
-
+        String claimKey = node.get("claimKey").asString();
+        String slotKey = node.get("slotKey").asString();
         // ===== 五元组 =====
         String subjectId = node.get("subjectId").asString();
         PredicateType predicate = PredicateType.valueOf(node.get("predicate").asString());
@@ -59,42 +68,41 @@ public record ClaimEvidence(
         // ===== 置信度 =====
         double confidence = node.get("confidence").asDouble();
 
+        int supportCount = node.get("supportCount").asInt();
         // ===== 来源 =====
         Source source = Source.valueOf(node.get("source").asString());
 
         String batch = node.get("batch").asString();
 
-        // ===== 状态 =====
-        EpistemicStatus status = EpistemicStatus.valueOf(node.get("epistemicStatus").asString());
+        // ===== 版本 =====
+        ClaimGeneration generation = ClaimGeneration.valueOf(node.get("generation").asString());
 
         // ===== 时间 =====
+        Instant createAt = node.get("createAt").asZonedDateTime().toInstant();
         Instant updatedAt = node.get("updatedAt").asZonedDateTime().toInstant();
 
-        Instant lastStatusChangedAt =
-                node.get("lastStatusChangedAt").isNull()
+        Instant lastSupportedAt =
+                node.get("lastSupportedAt").isNull()
                         ? null
-                        : node.get("lastStatusChangedAt")
+                        : node.get("lastSupportedAt")
                         .asZonedDateTime()
                         .toInstant();
 
-        int priority = node.get("priority").asInt();
-
         return new ClaimEvidence(
-                elementId,
+                claimKey,
+                slotKey,
                 subjectId,
                 predicate,
                 objectId,
                 qualifier,
                 polarity,
-                status,
                 confidence,
+                supportCount,
+                generation,
                 source,
-                batch,
+                createAt,
                 updatedAt,
-                lastStatusChangedAt,
-                priority,
-                0.0d,
-                null
+                lastSupportedAt
         );
     }
 

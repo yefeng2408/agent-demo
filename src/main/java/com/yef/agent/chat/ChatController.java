@@ -11,6 +11,7 @@ import com.yef.agent.graph.extract.*;
 import com.yef.agent.graph.llm.LlmPolisher;
 import com.yef.agent.graph.writer.Neo4jGraphWriter;
 import com.yef.agent.memory.EpistemicStatus;
+import com.yef.agent.memory.SlotBeliefState;
 import com.yef.agent.memory.vo.AgentResponse;
 import com.yef.agent.memory.vo.CanonicalRelation;
 import com.yef.agent.repository.ClaimEvidenceRepository;
@@ -21,7 +22,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.bind.annotation.*;
-
 import java.util.*;
 
 @Slf4j
@@ -36,8 +36,7 @@ public class ChatController {
     private final EpistemicRouter epistemicRouter;
 
 
-    public ChatController(
-                          Neo4jGraphAnswerer graphAnswerer,
+    public ChatController(Neo4jGraphAnswerer graphAnswerer,
                           LlmPolisher llmPolisher,
                           Neo4jGraphWriter neo4jGraphWriter,
                           LlmInteractionAdapter llmInteractionAdapter,
@@ -214,8 +213,7 @@ class EpistemicRouter {
                 .orElse(relations.get(0));
 
         // ========= 2️⃣ Canonicalize =========
-        Optional<CanonicalRelation> canonicalize =
-                relationCanonicalizer.canonicalize(r, msg);
+        Optional<CanonicalRelation> canonicalize = relationCanonicalizer.canonicalize(r, msg);
 
         if (canonicalize.isEmpty()) {
             return null;
@@ -243,8 +241,7 @@ class EpistemicRouter {
                     userId,
                     slotKey,
                     claimKey,
-                    0.6,
-                    EpistemicStatus.HYPOTHETICAL,
+                    SlotBeliefState.WEAKLY_CONFIRMED,
                     "BOOTSTRAP"
             );
         }

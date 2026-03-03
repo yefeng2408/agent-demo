@@ -5,9 +5,8 @@ import com.yef.agent.graph.answer.ClaimEvidence;
 import com.yef.agent.graph.eum.PredicateType;
 import com.yef.agent.graph.eum.Quantifier;
 import com.yef.agent.memory.EpistemicStatus;
-import com.yef.agent.memory.narrative.OverrideEvent;
+import com.yef.agent.memory.SlotBeliefState;
 import com.yef.agent.memory.pipeline.TransitionReason;
-import com.yef.agent.memory.vo.DominantClaimVO;
 import com.yef.agent.memory.vo.DominantSnapshot;
 import com.yef.agent.memory.vo.OverriddenEdgeVO;
 
@@ -62,8 +61,7 @@ public interface ClaimEvidenceRepository {
             String userId,
             String claimKey,
             String claimEvidenceId,
-            double supportConfidenceAt,
-            EpistemicStatus status,
+            SlotBeliefState beliefState,
             String reason);
 
 

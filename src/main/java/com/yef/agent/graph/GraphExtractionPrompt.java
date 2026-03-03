@@ -17,13 +17,14 @@ public class GraphExtractionPrompt {
               {
                 "subjectId": "...",
                 "predicateType": "...",
-                "objectId": "...",
+                "objectType": "CAR | STOCK | BRAND | CITY | COMPANY | PERSON",
+                "objectValue": "...",
                 "quantifier": "ONE | ANY",
                 "polarity": true | false,
-                "confidence": 0.0~1.0
+                "confidence": 0.1~0.99
               }
             ]
-            
+                        
             禁止输出解释、说明、文本。
             
             ========================
