@@ -90,6 +90,7 @@ async function chat() {
     scrollBottom()
   }
 }
+
 </script>
 
 <template>
@@ -97,7 +98,7 @@ async function chat() {
     <HelloWorld />
 
     <div class="console-wrapper">
-      <h2>Agent Memory Console</h2>
+      <h2>Memory  Agent  Console</h2>
 
       <div class="chat-container">
         <div
@@ -126,8 +127,16 @@ async function chat() {
           @keyup.enter="chat"
         />
         <button @click="chat" :disabled="loading">Send</button>
-        <button @click="resetMemory">Clear</button>
+        <button @click="resetMemory">Clear User Data</button>
       </div>
+
+            <div class="input-bar222">
+          <h5>
+            目前支持声明“我有特斯拉汽车”、“我没有特斯拉汽车” 形成认知博弈，然后提问“我是否拥有特斯拉汽车”，形成冲突裁决。
+          后续考虑增加更多的谓词(Predicate)，以满足更多类型的声明。当前正在优化图谱结构
+          </h5>
+      </div>
+
     </div>
   </div>
 </template>

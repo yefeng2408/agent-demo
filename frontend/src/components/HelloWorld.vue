@@ -5,6 +5,7 @@ import { DataSet } from 'vis-data'
 import { useAgentStore } from '../store/agentStore'
 import type { ExtractedRelation } from '../types/ExtractedRelation'
 
+
 // =====================================================
 // 🔥 Slot-Centric v9 — Live Cognitive Evolution (Interview Edition)
 // ✅ Snapshot History + Timeline Replay + Graph Highlight Animation
@@ -492,7 +493,7 @@ onBeforeUnmount(() => {
 
     <!-- 🧠 Cognitive Inspector -->
     <div style="margin-top:16px;padding:16px;border:1px solid #ddd;background:#fafafa;border-radius:8px">
-      <h3 style="margin-bottom:10px">🧠 Cognitive Inspector</h3>
+      <h3 style="margin-bottom:10px">Cognitive Inspector</h3>
 
       <!-- Decision Status -->
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">

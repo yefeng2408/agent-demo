@@ -17,7 +17,7 @@ spring:
 
     # Chat -> DeepSeek（OpenAI 兼容）
     openai:
-      api-key: sk-0814706a3e094203904230a30c96e3a9
+      api-key: sk-2dcd7907d14843c1aabfe642c59afa9f
       base-url: https://api.deepseek.com
       chat:
         options:
